@@ -18,7 +18,11 @@ export type ActiveModule =
   | 'financials';
 
 // Module 1: API Keys & Payment Gateways
+export type GatewayProvider = 'stripe' | 'paypal';
+export type GatewayRoutingMode = 'stripe_primary' | 'paypal_primary' | 'dual_smart_routing';
+
 export type StripeConfig = {
+  enabled: boolean;
   liveSecretKey: string;
   testSecretKey: string;
   livePublishableKey: string;
@@ -33,6 +37,33 @@ export type StripeConfig = {
   activeDisputes: number;
   successRate: number;
   monthlyVolume: number;
+};
+
+export type PayPalConfig = {
+  enabled: boolean;
+  liveClientId: string;
+  liveClientSecret: string;
+  sandboxClientId: string;
+  sandboxClientSecret: string;
+  webhookId: string;
+  environment: 'live' | 'sandbox';
+  smartPaymentButtons: boolean;
+  venmoEnabled: boolean;
+  payLaterEnabled: boolean;
+  instantPayoutsEnabled: boolean;
+  defaultCurrency: string;
+  merchantId: string;
+  lastRotated: string;
+  activeDisputes: number;
+  successRate: number;
+  monthlyVolume: number;
+};
+
+export type GatewayRoutingConfig = {
+  activeMode: GatewayRoutingMode;
+  fallbackOnFailure: boolean;
+  allowGuestCheckout: boolean;
+  defaultCurrency: string;
 };
 
 export type TangoCardBrand = {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Shield,
   Bell,
@@ -15,9 +15,11 @@ import {
   DollarSign,
   Activity,
   Layers,
+  Flame,
 } from 'lucide-react';
 import { AdminUser, ActiveModule } from '../../types';
 import { StorageService } from '../../services/storageService';
+import { firestoreSync, FirestoreConnectionStatus } from '../../services/firestoreSyncService';
 
 interface NavbarProps {
   adminUser: AdminUser;
@@ -38,6 +40,17 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [dbStatus, setDbStatus] = useState<FirestoreConnectionStatus>('connecting');
+  const [liveUserCount, setLiveUserCount] = useState<number>(0);
+
+  useEffect(() => {
+    const unsub = firestoreSync.onStatusChange((status, count) => {
+      setDbStatus(status);
+      setLiveUserCount(count);
+    });
+    return unsub;
+  }, []);
+
   const auditLogs = StorageService.getAuditLogs();
   const recentAlerts = auditLogs.slice(0, 5);
 
@@ -111,12 +124,27 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Right: Security Pill, Notifications & Admin Identity */}
       <div className="flex items-center gap-3">
-        {/* System Health / Region Status */}
-        <div className="hidden xl:flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-slate-300">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span className="text-[11px] font-mono text-slate-400">asia-east1</span>
-          <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
-            99.99%
+        {/* Firebase Cloud Connection Status */}
+        <div 
+          onClick={() => onSelectModule('celebrations')}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs cursor-pointer transition-colors ${
+            dbStatus === 'connected'
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 hover:bg-amber-500/20'
+              : dbStatus === 'connecting'
+              ? 'bg-slate-800 text-slate-300 border-slate-700'
+              : 'bg-indigo-950/40 border-indigo-800/40 text-indigo-300 hover:bg-indigo-900/30'
+          }`}
+          title={`Firebase Firestore Project: joyful-days | Live Users: ${liveUserCount}`}
+        >
+          <Flame className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+          <span className="font-mono text-[11px] font-semibold hidden md:inline">
+            joyful-days
+          </span>
+          <span className={`w-1.5 h-1.5 rounded-full ${
+            dbStatus === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'
+          }`} />
+          <span className="text-[10px] font-bold uppercase hidden xl:inline">
+            {dbStatus === 'connected' ? 'Firestore Live' : 'Cloud Sync'}
           </span>
         </div>
 

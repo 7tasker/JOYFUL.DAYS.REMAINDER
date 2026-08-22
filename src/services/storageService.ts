@@ -1,6 +1,8 @@
 import {
   AdminUser,
   StripeConfig,
+  PayPalConfig,
+  GatewayRoutingConfig,
   TangoCardConfig,
   AdUnitConfig,
   AdMobDailyStat,
@@ -16,6 +18,8 @@ import {
 import {
   INITIAL_ADMIN_USER,
   INITIAL_STRIPE_CONFIG,
+  INITIAL_PAYPAL_CONFIG,
+  INITIAL_GATEWAY_ROUTING,
   INITIAL_TANGO_CARD_CONFIG,
   INITIAL_TEST_TRANSACTIONS,
   INITIAL_AD_UNITS,
@@ -32,6 +36,8 @@ import {
 const STORAGE_KEYS = {
   AUTH_SESSION: 'joyful_admin_session_v1',
   STRIPE_CONFIG: 'joyful_stripe_config_v1',
+  PAYPAL_CONFIG: 'joyful_paypal_config_v1',
+  GATEWAY_ROUTING: 'joyful_gateway_routing_v1',
   TANGO_CONFIG: 'joyful_tango_config_v1',
   TEST_TRANSACTIONS: 'joyful_test_txs_v1',
   AD_UNITS: 'joyful_ad_units_v1',
@@ -74,7 +80,23 @@ export const StorageService = {
     return email.trim().toLowerCase() === 'admin@7tasker.com';
   },
 
-  // Stripe & Gateways
+  // Gateway Routing Mode & Fallback
+  getGatewayRouting(): GatewayRoutingConfig {
+    return getStoredItem<GatewayRoutingConfig>(STORAGE_KEYS.GATEWAY_ROUTING, INITIAL_GATEWAY_ROUTING);
+  },
+
+  updateGatewayRouting(config: GatewayRoutingConfig): void {
+    setStoredItem(STORAGE_KEYS.GATEWAY_ROUTING, config);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'GATEWAY_ROUTING_UPDATED',
+      module: 'Payment Gateway',
+      severity: 'warning',
+      details: `Gateway checkout routing adjusted to ${config.activeMode.toUpperCase()}. Fallback failover: ${config.fallbackOnFailure ? 'Enabled' : 'Disabled'}.`,
+    });
+  },
+
+  // Stripe Gateway Configuration
   getStripeConfig(): StripeConfig {
     return getStoredItem<StripeConfig>(STORAGE_KEYS.STRIPE_CONFIG, INITIAL_STRIPE_CONFIG);
   },
@@ -86,8 +108,22 @@ export const StorageService = {
       action: 'STRIPE_GATEWAY_CONFIG_UPDATED',
       module: 'Payment Gateway',
       severity: 'warning',
-      details: `Stripe settings updated. Environment: ${config.environment.toUpperCase()}, Payouts: ${config.payoutSchedule}`,
+      details: `Stripe settings updated. Status: ${config.enabled ? 'ENABLED' : 'DISABLED'}, Env: ${config.environment.toUpperCase()}, Payouts: ${config.payoutSchedule}`,
     });
+  },
+
+  toggleStripeStatus(enabled: boolean): StripeConfig {
+    const current = this.getStripeConfig();
+    const updated = { ...current, enabled };
+    setStoredItem(STORAGE_KEYS.STRIPE_CONFIG, updated);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: enabled ? 'STRIPE_GATEWAY_ENABLED' : 'STRIPE_GATEWAY_DISABLED',
+      module: 'Payment Gateway',
+      severity: enabled ? 'info' : 'warning',
+      details: `Stripe payment rail was ${enabled ? 'ENABLED' : 'DISABLED'} for checkout processing.`,
+    });
+    return updated;
   },
 
   rotateStripeKeys(newLiveSecret: string, newWebhookSecret: string): void {
@@ -105,6 +141,54 @@ export const StorageService = {
       module: 'Payment Gateway',
       severity: 'critical',
       details: 'Stripe Live Secret Key & Webhook Secret were securely rotated with instant zero-downtime key swap.',
+    });
+  },
+
+  // PayPal Gateway Configuration
+  getPayPalConfig(): PayPalConfig {
+    return getStoredItem<PayPalConfig>(STORAGE_KEYS.PAYPAL_CONFIG, INITIAL_PAYPAL_CONFIG);
+  },
+
+  updatePayPalConfig(config: PayPalConfig): void {
+    setStoredItem(STORAGE_KEYS.PAYPAL_CONFIG, config);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'PAYPAL_GATEWAY_CONFIG_UPDATED',
+      module: 'Payment Gateway',
+      severity: 'warning',
+      details: `PayPal settings updated. Status: ${config.enabled ? 'ENABLED' : 'DISABLED'}, Env: ${config.environment.toUpperCase()}, Venmo: ${config.venmoEnabled}, PayLater: ${config.payLaterEnabled}`,
+    });
+  },
+
+  togglePayPalStatus(enabled: boolean): PayPalConfig {
+    const current = this.getPayPalConfig();
+    const updated = { ...current, enabled };
+    setStoredItem(STORAGE_KEYS.PAYPAL_CONFIG, updated);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: enabled ? 'PAYPAL_GATEWAY_ENABLED' : 'PAYPAL_GATEWAY_DISABLED',
+      module: 'Payment Gateway',
+      severity: enabled ? 'info' : 'warning',
+      details: `PayPal Express & Commerce rail was ${enabled ? 'ENABLED' : 'DISABLED'} for checkout processing.`,
+    });
+    return updated;
+  },
+
+  rotatePayPalKeys(newLiveSecret: string, newWebhookId: string): void {
+    const current = this.getPayPalConfig();
+    const updated: PayPalConfig = {
+      ...current,
+      liveClientSecret: newLiveSecret,
+      webhookId: newWebhookId,
+      lastRotated: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+    };
+    setStoredItem(STORAGE_KEYS.PAYPAL_CONFIG, updated);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'PAYPAL_KEYS_ROTATED',
+      module: 'Payment Gateway',
+      severity: 'critical',
+      details: 'PayPal Live Client Secret & Webhook ID were securely rotated with zero downtime.',
     });
   },
 

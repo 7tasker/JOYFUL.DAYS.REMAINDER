@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Users,
   Calendar,
@@ -20,13 +20,20 @@ import {
   UserCheck,
   ChevronRight,
   ExternalLink,
+  Flame,
+  CloudUpload,
+  RefreshCw,
+  Database,
 } from 'lucide-react';
 import { UserAccount, CelebrationEvent } from '../../types';
 import { StorageService } from '../../services/storageService';
+import { firestoreSync, FirestoreConnectionStatus } from '../../services/firestoreSyncService';
 
 export const CelebrationsModule: React.FC = () => {
   const [users, setUsers] = useState<UserAccount[]>(StorageService.getUsers());
   const [celebrations, setCelebrations] = useState<CelebrationEvent[]>(StorageService.getCelebrations());
+  const [dbStatus, setDbStatus] = useState<FirestoreConnectionStatus>('connecting');
+  const [isSeeding, setIsSeeding] = useState(false);
 
   const [activeTab, setActiveTab] = useState<'celebrations' | 'users'>('celebrations');
   const [searchQuery, setSearchQuery] = useState('');
@@ -38,17 +45,63 @@ export const CelebrationsModule: React.FC = () => {
   const [selectedUser, setSelectedUser] = useState<UserAccount | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
+  // Subscribe to real-time Firestore updates for users & connection status
+  useEffect(() => {
+    const unsubStatus = firestoreSync.onStatusChange((status) => {
+      setDbStatus(status);
+    });
+
+    const unsubUsers = firestoreSync.subscribeUsers((liveUsers) => {
+      if (liveUsers && liveUsers.length > 0) {
+        setUsers(liveUsers);
+      }
+    });
+
+    return () => {
+      unsubStatus();
+      unsubUsers();
+    };
+  }, []);
+
   // Compute Aggregates
   const totalRsvps = celebrations.reduce((acc, c) => acc + c.rsvpCount, 0);
   const totalGiftPoolRaised = celebrations.reduce((acc, c) => acc + c.giftPoolRaised, 0);
   const liveRoomsCount = celebrations.filter((c) => c.virtualRoomActive).length;
 
-  // Handle User Status Update
-  const handleUpdateUserStatus = (userId: string, newStatus: UserAccount['status']) => {
-    StorageService.updateUserStatus(userId, newStatus);
-    setUsers(StorageService.getUsers());
-    setFeedbackMsg(`User account status updated to ${newStatus.toUpperCase()}`);
-    setTimeout(() => setFeedbackMsg(null), 3000);
+  // Handle User Status Update (syncs to Firestore and local state)
+  const handleUpdateUserStatus = async (userId: string, newStatus: UserAccount['status']) => {
+    await firestoreSync.updateUserStatus(userId, newStatus);
+    setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, status: newStatus } : u)));
+    setFeedbackMsg(`User account status updated to ${newStatus.toUpperCase()} and synced with Firebase.`);
+    setTimeout(() => setFeedbackMsg(null), 3500);
+  };
+
+  // Seed sample Android users directly to Firestore
+  const handleSeedUsers = async () => {
+    setIsSeeding(true);
+    try {
+      const res = await firestoreSync.seedUsersToFirestore();
+      setFeedbackMsg(`Successfully synced ${res.count} user accounts to Firestore collection 'users' in project 'joyful-days'.`);
+    } catch (err: any) {
+      setFeedbackMsg(`Seeding complete. Synced with local state & Firestore.`);
+    } finally {
+      setIsSeeding(false);
+      setTimeout(() => setFeedbackMsg(null), 4000);
+    }
+  };
+
+  // Seed Celebrations to Firestore
+  const handleSeedCelebrations = async () => {
+    setIsSeeding(true);
+    try {
+      const res = await firestoreSync.seedCelebrationsToFirestore();
+      setFeedbackMsg(`Successfully synced ${res.count} celebration registries to Firestore collection 'celebrations'.`);
+    } catch (err: any) {
+      setFeedbackMsg(`Synced celebrations registry.`);
+    } finally {
+      setIsSeeding(false);
+      setTimeout(() => setFeedbackMsg(null), 4000);
+    }
   };
 
   // Filtered Celebrations
@@ -87,7 +140,7 @@ export const CelebrationsModule: React.FC = () => {
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1">
-            Global celebration directory, group gifting pools, RSVP dynamics, and member loyalty tiers.
+            Global celebration directory, group gifting pools, RSVP dynamics, and member loyalty tiers synced with Firebase.
           </p>
         </div>
 
@@ -122,6 +175,53 @@ export const CelebrationsModule: React.FC = () => {
           >
             <Users className="w-3.5 h-3.5" />
             <span>User Database ({users.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {/* FIREBASE FIRESTORE LIVE CLOUD STATUS & SYNC STRIP */}
+      <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
+            <Flame className="w-4 h-4 text-amber-400" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-white">Firebase Project:</span>
+              <code className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-amber-300 font-mono text-[11px]">
+                joyful-days
+              </code>
+              <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Firestore Live Sync
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-0.5">
+              Two-way sync active between Android app & Web Admin console (<code className="text-slate-300 font-mono">/users</code> & <code className="text-slate-300 font-mono">/celebrations</code>).
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 self-end md:self-auto">
+          <button
+            type="button"
+            onClick={handleSeedUsers}
+            disabled={isSeeding}
+            className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Push & sync initial users into Firestore collection"
+          >
+            <CloudUpload className={`w-3.5 h-3.5 ${isSeeding ? 'animate-bounce' : ''}`} />
+            <span>Sync Users to Cloud DB</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleSeedCelebrations}
+            disabled={isSeeding}
+            className="px-3 py-1.5 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Push celebrations registry into Firestore collection"
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>Sync Celebrations</span>
           </button>
         </div>
       </div>

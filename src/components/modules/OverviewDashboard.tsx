@@ -69,7 +69,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               JoyfulDays Celebration Platform Console
             </h1>
             <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-2xl">
-              Centralized operations for payment rails (Stripe + Tango Card eGift), AdMob programmatic revenue, celebration event scale, database integrity, and platform commission settlement.
+              Centralized operations for multi-rail payment gateways (Stripe + PayPal Commerce + Tango Card eGift), AdMob programmatic revenue, celebration event scale, database integrity, and platform commission settlement.
             </p>
           </div>
 

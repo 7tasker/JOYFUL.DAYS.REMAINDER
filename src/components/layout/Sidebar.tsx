@@ -29,6 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const tangoConfig = StorageService.getTangoConfig();
   const stripeConfig = StorageService.getStripeConfig();
+  const paypalConfig = StorageService.getPayPalConfig();
 
   const navItems = [
     {
@@ -42,9 +43,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       id: 'gateways' as ActiveModule,
       label: 'API Keys & Gateways',
-      subtitle: 'Stripe & Tango Card eGift',
+      subtitle: 'Stripe, PayPal & Tango',
       icon: KeyRound,
-      badge: stripeConfig.environment.toUpperCase(),
+      badge: `${(stripeConfig.enabled ? 1 : 0) + (paypalConfig.enabled ? 1 : 0)} Active`,
       badgeColor: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
     },
     {

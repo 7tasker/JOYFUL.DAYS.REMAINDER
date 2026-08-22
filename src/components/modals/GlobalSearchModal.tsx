@@ -35,7 +35,9 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   if (!isOpen) return null;
 
   const quickLinks = [
-    { title: 'Stripe & Tango Card API Keys', module: 'gateways' as ActiveModule, icon: Key, category: 'Payment Rails' },
+    { title: 'Payment Gateways (Stripe, PayPal & Tango eGift)', module: 'gateways' as ActiveModule, icon: Key, category: 'Payment Rails' },
+    { title: 'PayPal Commerce & Express Checkout Settings', module: 'gateways' as ActiveModule, icon: Key, category: 'Payment Rails' },
+    { title: 'Gateway Switcher & Smart Routing', module: 'gateways' as ActiveModule, icon: Key, category: 'Payment Rails' },
     { title: 'AdMob Revenue & eCPM Waterfall', module: 'admob' as ActiveModule, icon: BarChart3, category: 'Monetization' },
     { title: 'User Database & Loyalty Tiering', module: 'celebrations' as ActiveModule, icon: Users, category: 'Community' },
     { title: 'Celebration Event Registry & RSVPs', module: 'celebrations' as ActiveModule, icon: Calendar, category: 'Events' },

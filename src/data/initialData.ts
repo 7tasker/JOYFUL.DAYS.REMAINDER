@@ -1,6 +1,8 @@
 import {
   AdminUser,
   StripeConfig,
+  PayPalConfig,
+  GatewayRoutingConfig,
   TangoCardConfig,
   AdUnitConfig,
   AdMobDailyStat,
@@ -26,6 +28,7 @@ export const INITIAL_ADMIN_USER: AdminUser = {
 };
 
 export const INITIAL_STRIPE_CONFIG: StripeConfig = {
+  enabled: true,
   liveSecretKey: 'sk_live_51N8eK2LJoyfulDays823901923849182390129381923',
   testSecretKey: 'sk_test_51N8eK2LJoyfulDaysTestMode823901923849182390',
   livePublishableKey: 'pk_live_51N8eK2LJoyfulDaysPub98234918230918239',
@@ -40,6 +43,33 @@ export const INITIAL_STRIPE_CONFIG: StripeConfig = {
   activeDisputes: 0,
   successRate: 99.82,
   monthlyVolume: 842930.50,
+};
+
+export const INITIAL_PAYPAL_CONFIG: PayPalConfig = {
+  enabled: true,
+  liveClientId: 'Af_Jd9482JoyfulLive_ClientId_88492019482019482019482019',
+  liveClientSecret: 'EL_Jd9482JoyfulLive_SecretKey_994019284019284019284019',
+  sandboxClientId: 'sb_Jd9482JoyfulSandbox_Client_109284019284019284',
+  sandboxClientSecret: 'sb_secret_994019284019284019284019284019284',
+  webhookId: 'WH-849204918239019284',
+  environment: 'live',
+  smartPaymentButtons: true,
+  venmoEnabled: true,
+  payLaterEnabled: true,
+  instantPayoutsEnabled: true,
+  defaultCurrency: 'USD',
+  merchantId: 'MCH-JOYFUL-PAYPAL-77492',
+  lastRotated: '2026-08-01 14:15:00 UTC',
+  activeDisputes: 0,
+  successRate: 99.76,
+  monthlyVolume: 328450.00,
+};
+
+export const INITIAL_GATEWAY_ROUTING: GatewayRoutingConfig = {
+  activeMode: 'dual_smart_routing',
+  fallbackOnFailure: true,
+  allowGuestCheckout: true,
+  defaultCurrency: 'USD',
 };
 
 export const INITIAL_TANGO_CARD_CONFIG: TangoCardConfig = {
