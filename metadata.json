@@ -1,0 +1,6 @@
+{
+  "name": "JoyfulDays Admin Dashboard",
+  "description": "Secure administrative console for the JoyfulDays celebration platform with payment gateway configs, AdMob monetization analytics, celebration event stats, database backup/audit logging, and commission reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
