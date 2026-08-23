@@ -13,7 +13,6 @@ import {
 } from './firebase';
 import { UserAccount, CelebrationEvent, AuditLogEntry } from '../types';
 import { StorageService } from './storageService';
-import { INITIAL_USERS, INITIAL_CELEBRATIONS } from '../data/initialData';
 
 export type FirestoreConnectionStatus = 'connected' | 'connecting' | 'fallback' | 'error';
 
@@ -48,16 +47,10 @@ class FirestoreSyncService {
       this.notifyStatus('connecting');
       const usersCol = collection(db, 'users');
       
-      // Try to read existing users from Firestore
       const snapshot = await getDocs(query(usersCol, limit(50)));
       this.isLiveConnected = true;
       this.liveUsersCount = snapshot.size;
       this.notifyStatus('connected', snapshot.size);
-
-      // If Firestore users collection is completely empty, optionally sync initial seed users
-      if (snapshot.empty) {
-        console.log('[Firestore] Users collection is empty. Ready for Android registrations or manual seed.');
-      }
     } catch (err: any) {
       console.warn('[Firestore] Connection in offline/fallback mode:', err?.message || err);
       this.notifyStatus('fallback');
@@ -88,21 +81,19 @@ class FirestoreSyncService {
                 status: (data.status || 'active') as UserAccount['status'],
                 joinedDate: data.joinedDate || data.createdAt || new Date().toISOString().substring(0, 10),
                 lastActive: data.lastActive || new Date().toISOString().replace('T', ' ').substring(0, 16),
-                deviceInfo: data.deviceInfo || data.deviceModel || 'Android App (v2.4)',
+                deviceInfo: data.deviceInfo || data.deviceModel || 'Android App',
               };
             });
 
             this.notifyStatus('connected', firestoreUsers.length);
             onUpdate(firestoreUsers);
           } else {
-            // If collection is empty, provide current local storage users and notify
-            const localUsers = StorageService.getUsers();
-            this.notifyStatus('connected', localUsers.length);
-            onUpdate(localUsers);
+            this.notifyStatus('connected', 0);
+            onUpdate([]);
           }
         },
         (error) => {
-          console.warn('[Firestore] Users listener error, using local storage fallback:', error.message);
+          console.warn('[Firestore] Users listener error:', error.message);
           this.notifyStatus('fallback');
           onUpdate(StorageService.getUsers());
         }
@@ -117,12 +108,56 @@ class FirestoreSyncService {
     }
   }
 
+  // Subscribe to live celebrations from Firestore with real-time updates
+  subscribeCelebrations(onUpdate: (celebrations: CelebrationEvent[]) => void): () => void {
+    try {
+      const celebrationsCol = collection(db, 'celebrations');
+      const unsubscribe = onSnapshot(
+        celebrationsCol,
+        (snapshot) => {
+          if (!snapshot.empty) {
+            const firestoreCelebrations: CelebrationEvent[] = snapshot.docs.map((docSnap) => {
+              const data = docSnap.data();
+              return {
+                id: docSnap.id,
+                title: data.title || 'Celebration Event',
+                type: data.type || 'birthday',
+                hostName: data.hostName || 'Host',
+                hostEmail: data.hostEmail || '',
+                eventDate: data.eventDate || new Date().toISOString().substring(0, 10),
+                rsvpCount: data.rsvpCount || 0,
+                giftPoolTarget: data.giftPoolTarget || 0,
+                giftPoolRaised: data.giftPoolRaised || 0,
+                status: data.status || 'upcoming',
+                virtualRoomActive: Boolean(data.virtualRoomActive),
+                guestCount: data.guestCount || 0,
+                tangoCardsSelected: data.tangoCardsSelected || [],
+              };
+            });
+
+            onUpdate(firestoreCelebrations);
+          } else {
+            onUpdate([]);
+          }
+        },
+        (error) => {
+          console.warn('[Firestore] Celebrations listener error:', error.message);
+          onUpdate(StorageService.getCelebrations());
+        }
+      );
+
+      return unsubscribe;
+    } catch (err) {
+      console.warn('[Firestore] Failed to set up celebrations listener:', err);
+      onUpdate(StorageService.getCelebrations());
+      return () => {};
+    }
+  }
+
   // Update user status (active / suspended / flagged) in Firestore & local
   async updateUserStatus(userId: string, status: UserAccount['status']): Promise<void> {
-    // 1. Update local storage immediately for fast UI feedback
     StorageService.updateUserStatus(userId, status);
 
-    // 2. Sync to Firestore document if online
     try {
       const userRef = doc(db, 'users', userId);
       await updateDoc(userRef, {
@@ -130,7 +165,6 @@ class FirestoreSyncService {
         updatedAt: new Date().toISOString(),
       });
     } catch (err) {
-      // Document might not exist in Firestore yet, try setting it with merge
       try {
         const userRef = doc(db, 'users', userId);
         await setDoc(userRef, { status, updatedAt: new Date().toISOString() }, { merge: true });
@@ -138,61 +172,6 @@ class FirestoreSyncService {
         console.warn('[Firestore] Could not sync user status update to Firestore:', innerErr);
       }
     }
-  }
-
-  // Seed sample Android users directly to Firestore to verify live sync
-  async seedUsersToFirestore(): Promise<{ count: number }> {
-    let count = 0;
-    for (const user of INITIAL_USERS) {
-      try {
-        const userRef = doc(db, 'users', user.id);
-        await setDoc(userRef, {
-          ...user,
-          syncedFrom: 'JoyfulDays Admin Console',
-          syncedAt: new Date().toISOString(),
-        }, { merge: true });
-        count++;
-      } catch (err) {
-        console.error(`Failed to seed user ${user.id}:`, err);
-      }
-    }
-
-    StorageService.addAuditLog({
-      actor: 'admin@7tasker.com',
-      action: 'FIRESTORE_USERS_SEEDED',
-      module: 'Users',
-      severity: 'info',
-      details: `Pushed ${count} user accounts into Firestore project 'joyful-days' for Android sync.`,
-    });
-
-    return { count };
-  }
-
-  // Sync Celebrations to Firestore
-  async seedCelebrationsToFirestore(): Promise<{ count: number }> {
-    let count = 0;
-    for (const celeb of INITIAL_CELEBRATIONS) {
-      try {
-        const celebRef = doc(db, 'celebrations', celeb.id);
-        await setDoc(celebRef, {
-          ...celeb,
-          syncedAt: new Date().toISOString(),
-        }, { merge: true });
-        count++;
-      } catch (err) {
-        console.error(`Failed to seed celebration ${celeb.id}:`, err);
-      }
-    }
-
-    StorageService.addAuditLog({
-      actor: 'admin@7tasker.com',
-      action: 'FIRESTORE_EVENTS_SEEDED',
-      module: 'Backups',
-      severity: 'info',
-      details: `Pushed ${count} celebration events into Firestore 'celebrations' collection.`,
-    });
-
-    return { count };
   }
 
   getStatus(): { status: FirestoreConnectionStatus; projectId: string } {

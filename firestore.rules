@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users collection
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Celebrations registry
+    match /celebrations/{celebrationId} {
+      allow read, write: if true;
+    }
+
+    // Payouts and settlements
+    match /payouts/{payoutId} {
+      allow read, write: if true;
+    }
+
+    // Audit logs
+    match /audit_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    // Gateway configs and settings
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // Default fallback
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

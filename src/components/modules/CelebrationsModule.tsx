@@ -52,14 +52,17 @@ export const CelebrationsModule: React.FC = () => {
     });
 
     const unsubUsers = firestoreSync.subscribeUsers((liveUsers) => {
-      if (liveUsers && liveUsers.length > 0) {
-        setUsers(liveUsers);
-      }
+      setUsers(liveUsers);
+    });
+
+    const unsubCelebrations = firestoreSync.subscribeCelebrations((liveCelebrations) => {
+      setCelebrations(liveCelebrations);
     });
 
     return () => {
       unsubStatus();
       unsubUsers();
+      unsubCelebrations();
     };
   }, []);
 
@@ -74,34 +77,6 @@ export const CelebrationsModule: React.FC = () => {
     setUsers((prev) => prev.map((u) => (u.id === userId ? { ...u, status: newStatus } : u)));
     setFeedbackMsg(`User account status updated to ${newStatus.toUpperCase()} and synced with Firebase.`);
     setTimeout(() => setFeedbackMsg(null), 3500);
-  };
-
-  // Seed sample Android users directly to Firestore
-  const handleSeedUsers = async () => {
-    setIsSeeding(true);
-    try {
-      const res = await firestoreSync.seedUsersToFirestore();
-      setFeedbackMsg(`Successfully synced ${res.count} user accounts to Firestore collection 'users' in project 'joyful-days'.`);
-    } catch (err: any) {
-      setFeedbackMsg(`Seeding complete. Synced with local state & Firestore.`);
-    } finally {
-      setIsSeeding(false);
-      setTimeout(() => setFeedbackMsg(null), 4000);
-    }
-  };
-
-  // Seed Celebrations to Firestore
-  const handleSeedCelebrations = async () => {
-    setIsSeeding(true);
-    try {
-      const res = await firestoreSync.seedCelebrationsToFirestore();
-      setFeedbackMsg(`Successfully synced ${res.count} celebration registries to Firestore collection 'celebrations'.`);
-    } catch (err: any) {
-      setFeedbackMsg(`Synced celebrations registry.`);
-    } finally {
-      setIsSeeding(false);
-      setTimeout(() => setFeedbackMsg(null), 4000);
-    }
   };
 
   // Filtered Celebrations
@@ -140,7 +115,7 @@ export const CelebrationsModule: React.FC = () => {
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1">
-            Global celebration directory, group gifting pools, RSVP dynamics, and member loyalty tiers synced with Firebase.
+            Global celebration directory, group gifting pools, RSVP dynamics, and member accounts synced with Firebase.
           </p>
         </div>
 
@@ -179,7 +154,7 @@ export const CelebrationsModule: React.FC = () => {
         </div>
       </div>
 
-      {/* FIREBASE FIRESTORE LIVE CLOUD STATUS & SYNC STRIP */}
+      {/* FIREBASE FIRESTORE LIVE CLOUD STATUS STRIP */}
       <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center shrink-0">
@@ -193,36 +168,20 @@ export const CelebrationsModule: React.FC = () => {
               </code>
               <span className="flex items-center gap-1 text-[11px] text-emerald-400 font-semibold">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                Firestore Live Sync
+                Firestore Live Sync Active
               </span>
             </div>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Two-way sync active between Android app & Web Admin console (<code className="text-slate-300 font-mono">/users</code> & <code className="text-slate-300 font-mono">/celebrations</code>).
+              Real-time Firestore collections (<code className="text-slate-300 font-mono">/users</code> & <code className="text-slate-300 font-mono">/celebrations</code>). New accounts and events appear automatically without refresh.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 self-end md:self-auto">
-          <button
-            type="button"
-            onClick={handleSeedUsers}
-            disabled={isSeeding}
-            className="px-3 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Push & sync initial users into Firestore collection"
-          >
-            <CloudUpload className={`w-3.5 h-3.5 ${isSeeding ? 'animate-bounce' : ''}`} />
-            <span>Sync Users to Cloud DB</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleSeedCelebrations}
-            disabled={isSeeding}
-            className="px-3 py-1.5 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-            title="Push celebrations registry into Firestore collection"
-          >
-            <Database className="w-3.5 h-3.5" />
-            <span>Sync Celebrations</span>
-          </button>
+        <div className="flex items-center gap-2 self-end md:self-auto text-slate-400 text-xs font-mono">
+          <span className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-300 flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            Connected ({users.length} users, {celebrations.length} events)
+          </span>
         </div>
       </div>
 
@@ -349,78 +308,88 @@ export const CelebrationsModule: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80">
-                {filteredCelebrations.map((c) => {
-                  const fundPercent = Math.min(100, Math.round((c.giftPoolRaised / c.giftPoolTarget) * 100));
-                  return (
-                    <tr key={c.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="p-3.5">
-                        <div className="font-semibold text-slate-100">{c.title}</div>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] px-2 py-0.2 rounded-full font-semibold uppercase bg-slate-800 text-slate-300 border border-slate-700">
-                            {c.type.replace('_', ' ')}
-                          </span>
-                          {c.virtualRoomActive && (
-                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 font-semibold flex items-center gap-1 border border-rose-500/30">
-                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
-                              Virtual Room Live
+                {filteredCelebrations.length > 0 ? (
+                  filteredCelebrations.map((c) => {
+                    const fundPercent = Math.min(100, c.giftPoolTarget > 0 ? Math.round((c.giftPoolRaised / c.giftPoolTarget) * 100) : 0);
+                    return (
+                      <tr key={c.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="p-3.5">
+                          <div className="font-semibold text-slate-100">{c.title}</div>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] px-2 py-0.2 rounded-full font-semibold uppercase bg-slate-800 text-slate-300 border border-slate-700">
+                              {c.type.replace('_', ' ')}
                             </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-3.5">
-                        <div className="font-medium text-slate-200">{c.hostName}</div>
-                        <div className="text-[10px] text-slate-400">{c.hostEmail}</div>
-                      </td>
-                      <td className="p-3.5 font-mono text-slate-300">
-                        {c.eventDate}
-                      </td>
-                      <td className="p-3.5">
-                        <span className="font-bold text-white font-mono">{c.rsvpCount}</span>
-                        <span className="text-slate-400 text-[11px]"> / {c.guestCount} invited</span>
-                      </td>
-                      <td className="p-3.5">
-                        <div className="font-mono font-bold text-emerald-400">
-                          ${c.giftPoolRaised.toLocaleString()}
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          Target: ${c.giftPoolTarget.toLocaleString()}
-                        </div>
-                      </td>
-                      <td className="p-3.5 w-36">
-                        <div className="flex items-center justify-between text-[10px] font-mono text-slate-300 mb-1">
-                          <span>{fundPercent}%</span>
-                          <span>${c.giftPoolRaised}</span>
-                        </div>
-                        <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 rounded-full"
-                            style={{ width: `${fundPercent}%` }}
-                          />
-                        </div>
-                      </td>
-                      <td className="p-3.5">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          c.status === 'live'
-                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                            : c.status === 'upcoming'
-                            ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                            : 'bg-slate-800 text-slate-400 border border-slate-700'
-                        }`}>
-                          {c.status.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="p-3.5 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedCelebration(c)}
-                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium border border-slate-700 transition-colors cursor-pointer"
-                        >
-                          View Pool
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
+                            {c.virtualRoomActive && (
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-rose-500/20 text-rose-300 font-semibold flex items-center gap-1 border border-rose-500/30">
+                                <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                                Virtual Room Live
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-3.5">
+                          <div className="font-medium text-slate-200">{c.hostName}</div>
+                          <div className="text-[10px] text-slate-400">{c.hostEmail}</div>
+                        </td>
+                        <td className="p-3.5 font-mono text-slate-300">
+                          {c.eventDate}
+                        </td>
+                        <td className="p-3.5">
+                          <span className="font-bold text-white font-mono">{c.rsvpCount}</span>
+                          <span className="text-slate-400 text-[11px]"> / {c.guestCount} invited</span>
+                        </td>
+                        <td className="p-3.5">
+                          <div className="font-mono font-bold text-emerald-400">
+                            ${c.giftPoolRaised.toLocaleString()}
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            Target: ${c.giftPoolTarget.toLocaleString()}
+                          </div>
+                        </td>
+                        <td className="p-3.5 w-36">
+                          <div className="flex items-center justify-between text-[10px] font-mono text-slate-300 mb-1">
+                            <span>{fundPercent}%</span>
+                            <span>${c.giftPoolRaised}</span>
+                          </div>
+                          <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 rounded-full"
+                              style={{ width: `${fundPercent}%` }}
+                            />
+                          </div>
+                        </td>
+                        <td className="p-3.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            c.status === 'live'
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                              : c.status === 'upcoming'
+                              ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                              : 'bg-slate-800 text-slate-400 border border-slate-700'
+                          }`}>
+                            {c.status.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCelebration(c)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-medium border border-slate-700 transition-colors cursor-pointer"
+                          >
+                            View Pool
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-slate-400">
+                      <Calendar className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                      <p className="text-sm font-semibold text-slate-300">No celebration events found</p>
+                      <p className="text-xs text-slate-500 mt-1">Events scheduled in the Android app will sync automatically in real time.</p>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -484,91 +453,101 @@ export const CelebrationsModule: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80">
-                {filteredUsers.map((u) => (
-                  <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
-                    <td className="p-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <img
-                          src={u.avatar}
-                          alt={u.name}
-                          className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-700"
-                        />
-                        <div>
-                          <div className="font-semibold text-slate-100">{u.name}</div>
-                          <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
+                {filteredUsers.length > 0 ? (
+                  filteredUsers.map((u) => (
+                    <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
+                      <td className="p-3.5">
+                        <div className="flex items-center gap-2.5">
+                          <img
+                            src={u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces'}
+                            alt={u.name}
+                            className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-700"
+                          />
+                          <div>
+                            <div className="font-semibold text-slate-100">{u.name}</div>
+                            <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="p-3.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                        u.loyaltyTier === 'Diamond'
-                          ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
-                          : u.loyaltyTier === 'Platinum'
-                          ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
-                          : u.loyaltyTier === 'Gold'
-                          ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                          : 'bg-slate-800 text-slate-400 border-slate-700'
-                      }`}>
-                        {u.loyaltyTier}
-                      </span>
-                    </td>
-                    <td className="p-3.5">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        u.status === 'vip' || u.status === 'active' || u.status === 'verified'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                          : u.status === 'flagged'
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                      }`}>
-                        {u.status.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="p-3.5 font-mono font-semibold text-white">
-                      {u.celebrationsHosted}
-                    </td>
-                    <td className="p-3.5 font-mono text-slate-300">
-                      {u.giftsSentCount} gifts
-                    </td>
-                    <td className="p-3.5 font-mono font-bold text-emerald-400">
-                      ${u.totalGiftsVolume.toLocaleString()}
-                    </td>
-                    <td className="p-3.5 text-slate-300 flex items-center gap-1">
-                      <MapPin className="w-3 h-3 text-slate-500" />
-                      {u.country}
-                    </td>
-                    <td className="p-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedUser(u)}
-                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-                          title="Inspect Profile"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
-                        {u.status !== 'suspended' ? (
+                      </td>
+                      <td className="p-3.5">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          u.loyaltyTier === 'Diamond'
+                            ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
+                            : u.loyaltyTier === 'Platinum'
+                            ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
+                            : u.loyaltyTier === 'Gold'
+                            ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                            : 'bg-slate-800 text-slate-400 border-slate-700'
+                        }`}>
+                          {u.loyaltyTier || 'Standard'}
+                        </span>
+                      </td>
+                      <td className="p-3.5">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          u.status === 'vip' || u.status === 'active' || u.status === 'verified'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : u.status === 'flagged'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        }`}>
+                          {u.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="p-3.5 font-mono font-semibold text-white">
+                        {u.celebrationsHosted || 0}
+                      </td>
+                      <td className="p-3.5 font-mono text-slate-300">
+                        {u.giftsSentCount || 0} gifts
+                      </td>
+                      <td className="p-3.5 font-mono font-bold text-emerald-400">
+                        ${(u.totalGiftsVolume || 0).toLocaleString()}
+                      </td>
+                      <td className="p-3.5 text-slate-300 flex items-center gap-1">
+                        <MapPin className="w-3 h-3 text-slate-500" />
+                        {u.country || 'Global'}
+                      </td>
+                      <td className="p-3.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
-                            onClick={() => handleUpdateUserStatus(u.id, 'suspended')}
-                            className="p-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-800/40 transition-colors"
-                            title="Suspend User"
+                            onClick={() => setSelectedUser(u)}
+                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                            title="Inspect Profile"
                           >
-                            <Ban className="w-3.5 h-3.5" />
+                            <Eye className="w-3.5 h-3.5" />
                           </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateUserStatus(u.id, 'active')}
-                            className="p-1.5 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 border border-emerald-800/40 transition-colors"
-                            title="Reinstate User"
-                          >
-                            <UserCheck className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
+                          {u.status !== 'suspended' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateUserStatus(u.id, 'suspended')}
+                              className="p-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-800/40 transition-colors"
+                              title="Suspend User"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateUserStatus(u.id, 'active')}
+                              className="p-1.5 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 border border-emerald-800/40 transition-colors"
+                              title="Reinstate User"
+                            >
+                              <UserCheck className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={8} className="p-8 text-center text-slate-400">
+                      <Users className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                      <p className="text-sm font-semibold text-slate-300">No user records found</p>
+                      <p className="text-xs text-slate-500 mt-1">Users authenticating with the Android application will sync here directly via Firestore.</p>
                     </td>
                   </tr>
-                ))}
+                )}
               </tbody>
             </table>
           </div>

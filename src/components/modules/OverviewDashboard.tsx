@@ -108,13 +108,13 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </div>
           </div>
           <div className="text-xl font-bold text-white font-mono">
-            ${(financialSummary.totalGmv / 1000000).toFixed(2)}M
+            ${financialSummary.totalGmv.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 text-emerald-400 font-medium">
             <span className="flex items-center gap-0.5">
-              <TrendingUp className="w-3 h-3" /> +14.2% MoM
+              <TrendingUp className="w-3 h-3" /> Live
             </span>
-            <span className="text-slate-400 font-normal">Stripe Rail: 99.8%</span>
+            <span className="text-slate-400 font-normal">Stripe Rail: 100%</span>
           </div>
         </div>
 
@@ -173,8 +173,8 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             ${financialSummary.adMobNetProfit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 text-slate-400">
-            <span className="text-indigo-400 font-medium">$10.21 Avg eCPM</span>
-            <span>1.42M Impr</span>
+            <span className="text-indigo-400 font-medium">Production Ads Ready</span>
+            <span>Live Units</span>
           </div>
         </div>
 
@@ -190,11 +190,11 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </div>
           </div>
           <div className="text-xl font-bold text-white font-mono truncate">
-            {latestBackup ? `${latestBackup.fileSizeMb} MB` : '4,892 MB'}
+            {latestBackup ? `${latestBackup.fileSizeMb} MB` : 'Ready'}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 text-slate-400">
-            <span className="text-cyan-400 font-medium">SHA-256 Verified</span>
-            <span>GCS Primary</span>
+            <span className="text-cyan-400 font-medium">Firestore Live</span>
+            <span>joyful-days</span>
           </div>
         </div>
       </div>
@@ -222,61 +222,69 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </button>
           </div>
 
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={dailyStats} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.0} />
-                  </linearGradient>
-                  <linearGradient id="ecpmGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="date" stroke="#64748b" fontSize={11} />
-                <YAxis stroke="#64748b" fontSize={11} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#0f172a',
-                    borderColor: '#334155',
-                    borderRadius: '0.75rem',
-                    fontSize: '12px',
-                    color: '#f8fafc',
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="adRevenue"
-                  name="Ad Revenue ($)"
-                  stroke="#f43f5e"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#revenueGrad)"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="impressions"
-                  name="Impressions"
-                  stroke="#f59e0b"
-                  strokeWidth={1.5}
-                  fillOpacity={1}
-                  fill="url(#ecpmGrad)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="h-64 w-full flex items-center justify-center">
+            {dailyStats.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={dailyStats} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.0} />
+                    </linearGradient>
+                    <linearGradient id="ecpmGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="date" stroke="#64748b" fontSize={11} />
+                  <YAxis stroke="#64748b" fontSize={11} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#0f172a',
+                      borderColor: '#334155',
+                      borderRadius: '0.75rem',
+                      fontSize: '12px',
+                      color: '#f8fafc',
+                    }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="adRevenue"
+                    name="Ad Revenue ($)"
+                    stroke="#f43f5e"
+                    strokeWidth={2}
+                    fillOpacity={1}
+                    fill="url(#revenueGrad)"
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="impressions"
+                    name="Impressions"
+                    stroke="#f59e0b"
+                    strokeWidth={1.5}
+                    fillOpacity={1}
+                    fill="url(#ecpmGrad)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="text-center py-12 text-slate-500">
+                <BarChart3 className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                <p className="text-xs font-semibold text-slate-400">No telemetry data recorded yet</p>
+                <p className="text-[11px] text-slate-500 mt-1">Live AdMob metrics will stream here in real time as ads are served in Android app.</p>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-2 pt-4 border-t border-slate-800/80 mt-2 text-center">
             <div className="p-2 rounded-xl bg-slate-950/60">
               <span className="text-[10px] text-slate-400 uppercase">Avg eCPM</span>
-              <p className="text-sm font-bold font-mono text-amber-400 mt-0.5">$10.21</p>
+              <p className="text-sm font-bold font-mono text-amber-400 mt-0.5">$0.00</p>
             </div>
             <div className="p-2 rounded-xl bg-slate-950/60">
               <span className="text-[10px] text-slate-400 uppercase">Fill Rate</span>
-              <p className="text-sm font-bold font-mono text-emerald-400 mt-0.5">98.4%</p>
+              <p className="text-sm font-bold font-mono text-emerald-400 mt-0.5">100%</p>
             </div>
             <div className="p-2 rounded-xl bg-slate-950/60">
               <span className="text-[10px] text-slate-400 uppercase">Dispute Rate</span>
@@ -306,30 +314,38 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </div>
 
             <div className="space-y-3">
-              {recentTransactions.map((tx) => (
-                <div
-                  key={tx.id}
-                  className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 hover:border-slate-700 transition-colors"
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-white truncate max-w-[150px]">
-                      {tx.recipientName}
-                    </span>
-                    <span className="text-xs font-bold font-mono text-emerald-400">
-                      ${tx.amount.toFixed(2)}
-                    </span>
+              {recentTransactions.length > 0 ? (
+                recentTransactions.map((tx) => (
+                  <div
+                    key={tx.id}
+                    className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 hover:border-slate-700 transition-colors"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold text-white truncate max-w-[150px]">
+                        {tx.recipientName}
+                      </span>
+                      <span className="text-xs font-bold font-mono text-emerald-400">
+                        ${tx.amount.toFixed(2)}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 truncate mt-0.5">
+                      {tx.brandName} • {tx.celebrationTitle}
+                    </p>
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1.5 font-mono">
+                      <span className="text-emerald-400/90 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Delivered
+                      </span>
+                      <span>Code: {tx.redemptionCode}</span>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                    {tx.brandName} • {tx.celebrationTitle}
-                  </p>
-                  <div className="flex items-center justify-between text-[10px] text-slate-500 mt-1.5 font-mono">
-                    <span className="text-emerald-400/90 flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> Delivered
-                    </span>
-                    <span>Code: {tx.redemptionCode}</span>
-                  </div>
+                ))
+              ) : (
+                <div className="py-8 text-center bg-slate-950/40 rounded-xl border border-slate-800/60 p-4">
+                  <Gift className="w-6 h-6 mx-auto text-slate-600 mb-1.5" />
+                  <p className="text-xs text-slate-400 font-medium">No gift dispatches yet</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Automated gift card deliveries will appear here in real time.</p>
                 </div>
-              ))}
+              )}
             </div>
           </div>
 
@@ -340,7 +356,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
               className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 transition-colors flex items-center justify-center gap-2 cursor-pointer"
             >
               <Users className="w-3.5 h-3.5 text-rose-400" />
-              <span>Explore All 142k+ Celebration Events</span>
+              <span>Explore Celebrations & Users</span>
             </button>
           </div>
         </div>
@@ -354,7 +370,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-rose-400" />
               <div>
-                <h3 className="text-sm font-bold text-slate-100">Featured High-Volume Celebrations</h3>
+                <h3 className="text-sm font-bold text-slate-100">Active Celebrations</h3>
                 <p className="text-xs text-slate-400">Group gift pool progress & host RSVP status</p>
               </div>
             </div>
@@ -368,46 +384,54 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           </div>
 
           <div className="space-y-3">
-            {celebrations.slice(0, 3).map((evt) => (
-              <div
-                key={evt.id}
-                className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80"
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <div>
-                    <h4 className="text-xs font-bold text-white">{evt.title}</h4>
-                    <p className="text-[11px] text-slate-400">
-                      Host: {evt.hostName} ({evt.rsvpCount} RSVPs confirmed)
-                    </p>
+            {celebrations.length > 0 ? (
+              celebrations.slice(0, 3).map((evt) => (
+                <div
+                  key={evt.id}
+                  className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80"
+                >
+                  <div className="flex items-center justify-between mb-1.5">
+                    <div>
+                      <h4 className="text-xs font-bold text-white">{evt.title}</h4>
+                      <p className="text-[11px] text-slate-400">
+                        Host: {evt.hostName} ({evt.rsvpCount} RSVPs confirmed)
+                      </p>
+                    </div>
+                    <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full border ${
+                      evt.status === 'live'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 animate-pulse'
+                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30'
+                    }`}>
+                      {evt.status}
+                    </span>
                   </div>
-                  <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full border ${
-                    evt.status === 'live'
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 animate-pulse'
-                      : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30'
-                  }`}>
-                    {evt.status}
-                  </span>
-                </div>
 
-                <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden my-2">
-                  <div
-                    className="h-full bg-gradient-to-r from-rose-500 to-amber-500 rounded-full"
-                    style={{
-                      width: `${Math.min(100, (evt.giftPoolRaised / evt.giftPoolTarget) * 100)}%`,
-                    }}
-                  />
-                </div>
+                  <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden my-2">
+                    <div
+                      className="h-full bg-gradient-to-r from-rose-500 to-amber-500 rounded-full"
+                      style={{
+                        width: `${Math.min(100, evt.giftPoolTarget > 0 ? (evt.giftPoolRaised / evt.giftPoolTarget) * 100 : 0)}%`,
+                      }}
+                    />
+                  </div>
 
-                <div className="flex justify-between items-center text-[11px] font-mono">
-                  <span className="text-slate-400">
-                    Raised: <strong className="text-white">${evt.giftPoolRaised.toLocaleString()}</strong> of ${evt.giftPoolTarget.toLocaleString()}
-                  </span>
-                  <span className="text-emerald-400 font-semibold">
-                    {Math.round((evt.giftPoolRaised / evt.giftPoolTarget) * 100)}% Funded
-                  </span>
+                  <div className="flex justify-between items-center text-[11px] font-mono">
+                    <span className="text-slate-400">
+                      Raised: <strong className="text-white">${evt.giftPoolRaised.toLocaleString()}</strong> of ${evt.giftPoolTarget.toLocaleString()}
+                    </span>
+                    <span className="text-emerald-400 font-semibold">
+                      {evt.giftPoolTarget > 0 ? Math.round((evt.giftPoolRaised / evt.giftPoolTarget) * 100) : 0}% Funded
+                    </span>
+                  </div>
                 </div>
+              ))
+            ) : (
+              <div className="py-8 text-center bg-slate-950/40 rounded-xl border border-slate-800/60 p-4">
+                <Sparkles className="w-6 h-6 mx-auto text-slate-600 mb-1.5" />
+                <p className="text-xs text-slate-400 font-medium">No celebration events registered yet</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Events created in the Android mobile app will automatically appear here in real time.</p>
               </div>
-            ))}
+            )}
           </div>
         </div>
 

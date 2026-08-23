@@ -49,7 +49,28 @@ const STORAGE_KEYS = {
   AUDIT_LOGS: 'joyful_audit_logs_v1',
   FINANCIALS: 'joyful_financials_v1',
   PAYOUTS: 'joyful_payouts_v1',
+  PURGE_FLAG: 'joyful_test_data_purged_v2',
 };
+
+// Purge any legacy mock test data from localStorage
+(function purgeLegacyTestData() {
+  try {
+    if (!localStorage.getItem(STORAGE_KEYS.PURGE_FLAG)) {
+      localStorage.removeItem(STORAGE_KEYS.USERS);
+      localStorage.removeItem(STORAGE_KEYS.CELEBRATIONS);
+      localStorage.removeItem(STORAGE_KEYS.TEST_TRANSACTIONS);
+      localStorage.removeItem(STORAGE_KEYS.PAYOUTS);
+      localStorage.removeItem(STORAGE_KEYS.BACKUPS);
+      localStorage.removeItem(STORAGE_KEYS.AUDIT_LOGS);
+      localStorage.removeItem(STORAGE_KEYS.FINANCIALS);
+      localStorage.removeItem(STORAGE_KEYS.ADMOB_STATS);
+      localStorage.removeItem(STORAGE_KEYS.ADMOB_COUNTRIES);
+      localStorage.setItem(STORAGE_KEYS.PURGE_FLAG, 'true');
+    }
+  } catch (e) {
+    // Ignore storage restrictions if any
+  }
+})();
 
 // Safe JSON parser
 function getStoredItem<T>(key: string, fallback: T): T {
