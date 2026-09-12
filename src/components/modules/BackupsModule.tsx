@@ -18,13 +18,21 @@ import {
   Filter,
   Search,
   CheckCircle2,
+  QrCode,
+  KeyRound,
+  FileText,
+  Smartphone,
+  Shield,
 } from 'lucide-react';
-import { DatabaseBackup, AuditLogEntry } from '../../types';
+import { DatabaseBackup, AuditLogEntry, TwoFactorSecurityConfig } from '../../types';
 import { StorageService } from '../../services/storageService';
+import { TwoFactorSettingsModal } from '../modals/TwoFactorSettingsModal';
 
 export const BackupsModule: React.FC = () => {
   const [backups, setBackups] = useState<DatabaseBackup[]>(StorageService.getBackups());
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(StorageService.getAuditLogs());
+  const [twoFactorConfig, setTwoFactorConfig] = useState<TwoFactorSecurityConfig>(StorageService.getTwoFactorConfig());
+  const [is2FAModalOpen, setIs2FAModalOpen] = useState(false);
 
   const [selectedBackupType, setSelectedBackupType] = useState<DatabaseBackup['backupType']>('full_database');
   const [isCreatingBackup, setIsCreatingBackup] = useState(false);
@@ -98,12 +106,51 @@ export const BackupsModule: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="text-right">
+          <button
+            type="button"
+            onClick={() => setIs2FAModalOpen(true)}
+            className="px-4 py-2 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white rounded-xl text-xs font-semibold flex items-center gap-2 shadow-lg shadow-rose-950/40 transition-all cursor-pointer"
+          >
+            <QrCode className="w-4 h-4" />
+            <span>2FA QR & Backup Codes</span>
+          </button>
+          <div className="text-right hidden sm:block">
             <span className="text-[10px] uppercase font-bold text-slate-400 block">Snapshot Storage Target</span>
             <span className="text-xs font-mono font-semibold text-cyan-400 flex items-center gap-1 justify-end">
               <Cloud className="w-3.5 h-3.5" /> GCS Multi-Region (Encrypted)
             </span>
           </div>
+        </div>
+      </div>
+
+      {/* 2FA Security Overview Ribbon */}
+      <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-slate-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 shrink-0">
+            <Shield className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-white">Two-Factor Authentication & Root Security Keys</h3>
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                {twoFactorConfig.enabled ? '2FA Active' : '2FA Inactive'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              TOTP Seed Configured • {twoFactorConfig.backupCodes.filter((c) => !c.used).length} of {twoFactorConfig.backupCodes.length} Emergency Backup Codes Active • Fallback PIN Protected
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 w-full md:w-auto">
+          <button
+            type="button"
+            onClick={() => setIs2FAModalOpen(true)}
+            className="w-full md:w-auto px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
+          >
+            <QrCode className="w-3.5 h-3.5 text-rose-400" />
+            <span>Generate QR / Manage Backup Codes</span>
+          </button>
         </div>
       </div>
 
@@ -417,6 +464,13 @@ export const BackupsModule: React.FC = () => {
           ))}
         </div>
       </div>
+
+      {/* 2FA Configuration & Backup Codes Modal */}
+      <TwoFactorSettingsModal
+        isOpen={is2FAModalOpen}
+        onClose={() => setIs2FAModalOpen(false)}
+        onConfigUpdated={(cfg) => setTwoFactorConfig(cfg)}
+      />
     </div>
   );
 };

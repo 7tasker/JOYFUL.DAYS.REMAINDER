@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Strict HTTPS Only: Cleartext HTTP is explicitly forbidden -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- Domain configuration for JoyfulDays Production Backend and Firebase APIs -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">com-backend-joyfuldays.ai.studio</domain>
+        <domain includeSubdomains="true">firestore.googleapis.com</domain>
+        <domain includeSubdomains="true">firebaseapp.com</domain>
+        <domain includeSubdomains="true">googleapis.com</domain>
+    </domain-config>
+</network-security-config>

@@ -1,9 +1,19 @@
 import {
   AdminUser,
+  TwoFactorSecurityConfig,
+  AppFeatureConfig,
+  ReviewReminderConfig,
+  UserReview,
+  UserWithReviewDetails,
+  BackupCode,
   StripeConfig,
   PayPalConfig,
   GatewayRoutingConfig,
   TangoCardConfig,
+  AdMobCredentials,
+  AdMobSettingsConfig,
+  AppEngagementAnalytics,
+  AdEventMetrics,
   AdUnitConfig,
   AdMobDailyStat,
   AdMobCountryRevenue,
@@ -14,7 +24,47 @@ import {
   FinancialSummary,
   HostPayoutLedger,
   TestGiftTransaction,
+  GooglePlayConfig,
 } from '../types';
+
+export const INITIAL_GOOGLE_PLAY_CONFIG: GooglePlayConfig = {
+  enabled: true,
+  packageName: 'com.joyfuldays.app',
+  serviceAccountEmail: 'joyfuldays-play-api@ai-studio-joyfuldays.iam.gserviceaccount.com',
+  serviceAccountKeyJson: '{\n  "type": "service_account",\n  "project_id": "ai-studio-joyfuldays",\n  "private_key_id": "play_key_849204918239019284",\n  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC5\\n-----END PRIVATE KEY-----\\n",\n  "client_email": "joyfuldays-play-api@ai-studio-joyfuldays.iam.gserviceaccount.com"\n}',
+  inAppReviewApiEnabled: true,
+  playBillingEnabled: true,
+  sha256Certificate: '3E:8F:A1:4D:99:B2:C4:E8:77:1A:05:6E:9F:2B:D3:4A:88:1C:5E:7B:3A:9F:01:22:4C:8A:DF:09:88:E2:1B:39',
+  environment: 'production',
+  lastUpdated: '2026-08-25 10:20:00 UTC',
+  status: 'connected',
+};
+
+export const INITIAL_TWO_FACTOR_CONFIG: TwoFactorSecurityConfig = {
+  enabled: true,
+  requiredForLogin: true,
+  secretKey: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+  otpAuthUrl: 'otpauth://totp/JoyfulDays%20Admin:admin@7tasker.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=JoyfulDays&algorithm=SHA1&digits=6&period=30',
+  accountEmail: 'admin@7tasker.com',
+  issuer: 'JoyfulDays Admin',
+  hardwareSecurityPin: '784920',
+  preferredMethod: 'authenticator_app',
+  enforceIpBinding: false,
+  sessionTimeoutMinutes: 60,
+  lastConfigured: '2026-08-21 05:38:12 UTC',
+  backupCodes: [
+    { code: '8492-1049', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+    { code: '3910-5829', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+    { code: '7721-9482', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+    { code: '1938-4028', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+    { code: '5502-3819', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+    { code: '6829-1094', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+    { code: '4019-8831', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+    { code: '9381-2740', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+    { code: '2840-5912', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+    { code: '6103-7492', used: false, generatedAt: '2026-08-21 05:38:12 UTC' },
+  ],
+};
 
 export const INITIAL_ADMIN_USER: AdminUser = {
   email: 'admin@7tasker.com',
@@ -176,6 +226,96 @@ export const INITIAL_TANGO_CARD_CONFIG: TangoCardConfig = {
   ],
 };
 
+export const INITIAL_ADMOB_CREDENTIALS: AdMobCredentials = {
+  appId: 'ca-app-pub-8492049102930192~5839201948',
+  publisherId: 'pub-8492049102930192',
+  apiKey: 'AIzaSyAdMobLiveSyncKey9940192840192840192',
+  clientEmail: 'admob-sync@joyful-days.iam.gserviceaccount.com',
+  environment: 'production',
+  bannerAdUnitId: 'ca-app-pub-8492049102930192/1092849102',
+  interstitialAdUnitId: 'ca-app-pub-8492049102930192/3948201940',
+  rewardedAdUnitId: 'ca-app-pub-8492049102930192/9482019482',
+  appOpenAdUnitId: 'ca-app-pub-8492049102930192/5839201948',
+  nativeAdUnitId: 'ca-app-pub-8492049102930192/7482019483',
+  autoSyncToFirestore: true,
+  lastUpdated: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+};
+
+// Master Ad Control Defaults (Settings/admob) - ALWAYS OFF BY DEFAULT
+export const INITIAL_ADMOB_SETTINGS: AdMobSettingsConfig = {
+  adsEnabled: false,
+  bannerEnabled: false,
+  interstitialEnabled: false,
+  bannerAdUnitId: '',
+  interstitialAdUnitId: '',
+  bannerPlacement: 'BOTTOM',
+  interstitialTrigger: 'NATURAL_BREAK',
+  interstitialFrequency: 5,
+  minActionsBeforeFirstAd: 5,
+  minimumSessionTimeSeconds: 120,
+  cooldownMinutes: 10,
+  maxInterstitialsPerSession: 2,
+  updatedAt: new Date().toISOString(),
+  updatedBy: 'Admin@7tasker.com',
+};
+
+// Firebase / Google Analytics Engagement Telemetry Contract
+export const INITIAL_ENGAGEMENT_ANALYTICS: AppEngagementAnalytics = {
+  activeUsers: {
+    dau: 1420,
+    wau: 6850,
+    mau: 18200,
+  },
+  newUsers: {
+    today: 84,
+    thisWeek: 560,
+    thisMonth: 2310,
+  },
+  sessions: {
+    totalToday: 3840,
+    avgDurationSeconds: 252, // 4m 12s
+    sessionsWithAdsCount: 0,
+    sessionsWithAdsPercent: 0,
+  },
+  actions: {
+    eventCreated: 842,
+    eventEdited: 418,
+    eventViewed: 4920,
+    reminderCreated: 1290,
+    calendarNavigated: 3140,
+  },
+  retention: {
+    day1Percent: 58.4,
+    day7Percent: 34.2,
+    day30Percent: 21.0,
+  },
+};
+
+// Advertising Related Event Metrics
+export const INITIAL_AD_EVENT_METRICS: AdEventMetrics = {
+  banner: {
+    requested: 0,
+    loaded: 0,
+    failed: 0,
+    impressions: 0,
+  },
+  interstitial: {
+    eligible: 0,
+    requested: 0,
+    loaded: 0,
+    shown: 0,
+    dismissed: 0,
+    failed: 0,
+  },
+  performance: {
+    loadSuccessRatePercent: 0,
+    loadFailureRatePercent: 0,
+    interstitialsPerSession: 0,
+    avgTimeBeforeFirstAdSeconds: 0,
+    postAdSessionDropoffPercent: 0,
+  },
+};
+
 export const INITIAL_TEST_TRANSACTIONS: TestGiftTransaction[] = [];
 
 export const INITIAL_AD_UNITS: AdUnitConfig[] = [
@@ -277,3 +417,258 @@ export const INITIAL_FINANCIAL_SUMMARY: FinancialSummary = {
 };
 
 export const INITIAL_HOST_PAYOUTS: HostPayoutLedger[] = [];
+
+export const INITIAL_APP_FEATURE_CONFIG: AppFeatureConfig = {
+  isGiftingEnabled: false,
+  isPoolingEnabled: false,
+  isTangoCardDirectGiftEnabled: false,
+  minimumContributionAmount: 5.0,
+  maintenanceMessage: 'Gifting and pool contributions are temporarily paused for maintenance. Please check back shortly.',
+  bannerNoticeMessage: 'JoyfulDays Gifting & Pool Services Active',
+  lastUpdated: new Date().toISOString(),
+  updatedBy: 'admin@7tasker.com',
+  apiVersion: 'v1.2.0',
+};
+
+export const INITIAL_REVIEW_REMINDER_CONFIG: ReviewReminderConfig = {
+  isEnabled: true,
+  initialDelayHours: 3, // Monitor & actively trigger if no review recorded within 3 hours of signin
+  retryIntervalHours: 24, // Interval between subsequent reminders if unreviewed
+  maxReminderAttempts: 3,
+  triggerModes: {
+    inAppPopup: true,
+    pushNotification: true,
+    afterCelebrationCreated: true,
+    afterGiftSent: true,
+  },
+  pushNotificationTemplate: {
+    title: '⭐ How is your JoyfulDays experience?',
+    body: 'We\'d love your feedback! Rate us on Google Play or share your thoughts to help us improve.',
+    actionText: 'Rate Now',
+    deepLink: 'joyfuldays://review/play-store',
+  },
+  inAppPopupTemplate: {
+    headline: 'Enjoying JoyfulDays celebrations?',
+    subheadline: 'Your honest feedback helps us support more unforgettable moments for friends & family.',
+    positiveButtonText: 'Rate on Google Play ★★★★★',
+    dismissButtonText: 'Remind Me Later',
+    fallbackPlayStoreUrl: 'https://play.google.com/store/apps/details?id=com.joyfuldays.app',
+  },
+  quietHours: {
+    enabled: true,
+    startHour: 22,
+    endHour: 8,
+  },
+  lastUpdated: new Date().toISOString(),
+  updatedBy: 'Admin@7tasker.com',
+};
+
+export const INITIAL_USER_REVIEWS: UserReview[] = [
+  {
+    id: 'rev-01',
+    userId: 'usr-sarah-j',
+    userName: 'Sarah Jenkins',
+    userEmail: 'sarah.jenkins@example.com',
+    rating: 5,
+    title: 'Flawless celebration pooling!',
+    comment: 'Coordinating dinner reservations and pooling birthday gift funds with 8 friends was super seamless. The Google Play integration and Tango cards are amazing.',
+    source: 'google_play_in_app',
+    sentiment: 'positive',
+    deviceModel: 'Google Pixel 8 Pro',
+    osVersion: 'Android 14 (API 34)',
+    appVersion: 'v1.2.0-apk',
+    createdAt: new Date(Date.now() - 3600000 * 18).toISOString(),
+    isPublic: true,
+    adminResponse: 'Thank you Sarah! Glad the celebration was a hit!',
+    respondedAt: new Date(Date.now() - 3600000 * 12).toISOString(),
+  },
+  {
+    id: 'rev-02',
+    userId: 'usr-michael-c',
+    userName: 'Michael Chen',
+    userEmail: 'm.chen92@techcorp.io',
+    rating: 5,
+    title: 'Great AdMob rewards and gift options',
+    comment: 'The in-app review prompt appeared right after my anniversary toast. Very clean UI and fast payments via Stripe.',
+    source: 'google_play_in_app',
+    sentiment: 'positive',
+    deviceModel: 'Samsung Galaxy S24 Ultra',
+    osVersion: 'Android 14 (OneUI 6.1)',
+    appVersion: 'v1.2.0-apk',
+    createdAt: new Date(Date.now() - 3600000 * 36).toISOString(),
+    isPublic: true,
+  },
+  {
+    id: 'rev-03',
+    userId: 'usr-david-k',
+    userName: 'David Kim',
+    userEmail: 'david.k@kimarchitects.com',
+    rating: 4,
+    title: 'Solid celebration app',
+    comment: 'Would love even more gift card options in future releases, but overall 10/10 experience for group gifts.',
+    source: 'in_app_feedback_form',
+    sentiment: 'positive',
+    deviceModel: 'OnePlus 12',
+    osVersion: 'Android 14 (OxygenOS 14)',
+    appVersion: 'v1.2.0-apk',
+    createdAt: new Date(Date.now() - 3600000 * 52).toISOString(),
+    isPublic: true,
+  },
+];
+
+export const INITIAL_USERS_WITH_REVIEWS: UserWithReviewDetails[] = [
+  {
+    id: 'usr-sarah-j',
+    name: 'Sarah Jenkins',
+    email: 'sarah.jenkins@example.com',
+    avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=120&auto=format&fit=crop&q=80',
+    status: 'vip',
+    authTokenPrefix: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3Itc2FyYWgtaiIsImV4cCI6MTgwMDAwMDAwMH0.x8K9...',
+    authProvider: 'google.com',
+    signInTimestamp: new Date(Date.now() - 3600000 * 20).toISOString(),
+    hoursSinceSignIn: 20,
+    deviceInfo: {
+      model: 'Google Pixel 8 Pro (husky)',
+      manufacturer: 'Google',
+      osVersion: 'Android 14 (API 34)',
+      appVersion: '1.2.0 (Build 42)',
+      fcmTokenPrefix: 'fcm_98fKa_pixel8_zL01',
+      ipAddress: '172.56.21.84',
+      locale: 'en_US',
+    },
+    reviewStatus: 'reviewed',
+    review: INITIAL_USER_REVIEWS[0],
+    reminderCount: 0,
+    isEligibleForReminder: false,
+    forcePopupPending: false,
+  },
+  {
+    id: 'usr-elena-r',
+    name: 'Elena Rostova',
+    email: 'elena.rostova@designstudio.de',
+    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+    status: 'verified',
+    authTokenPrefix: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3ItZWxlbmEtciIsImV4cCI6MTgwMDAwMDAwMH0.m7N2...',
+    authProvider: 'google.com',
+    signInTimestamp: new Date(Date.now() - 3600000 * 4.5).toISOString(),
+    hoursSinceSignIn: 4.5,
+    deviceInfo: {
+      model: 'Samsung Galaxy S24+ (SM-S926B)',
+      manufacturer: 'Samsung',
+      osVersion: 'Android 14 (OneUI 6.1)',
+      appVersion: '1.2.0 (Build 42)',
+      fcmTokenPrefix: 'fcm_e81mK_s24plus_qR99',
+      ipAddress: '84.115.72.19',
+      locale: 'de_DE',
+    },
+    reviewStatus: 'pending_review',
+    reminderCount: 0,
+    lastRemindedAt: undefined,
+    nextScheduledReminder: 'Scheduled (Overdue 1.5h)',
+    isEligibleForReminder: true, // Signed in > 3 hours ago, no review recorded
+    forcePopupPending: false,
+  },
+  {
+    id: 'usr-michael-c',
+    name: 'Michael Chen',
+    email: 'm.chen92@techcorp.io',
+    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop&q=80',
+    status: 'active',
+    authTokenPrefix: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3ItbWljaGFlbC1jIiwiZXhwIjoxODAwMDAwMDAwfQ.k3P1...',
+    authProvider: 'password',
+    signInTimestamp: new Date(Date.now() - 3600000 * 38).toISOString(),
+    hoursSinceSignIn: 38,
+    deviceInfo: {
+      model: 'Samsung Galaxy S24 Ultra (SM-S928U)',
+      manufacturer: 'Samsung',
+      osVersion: 'Android 14 (OneUI 6.1)',
+      appVersion: '1.2.0 (Build 42)',
+      fcmTokenPrefix: 'fcm_k92aP_s24u_vT55',
+      ipAddress: '198.51.100.33',
+      locale: 'en_US',
+    },
+    reviewStatus: 'reviewed',
+    review: INITIAL_USER_REVIEWS[1],
+    reminderCount: 1,
+    lastRemindedAt: new Date(Date.now() - 3600000 * 37).toISOString(),
+    isEligibleForReminder: false,
+    forcePopupPending: false,
+  },
+  {
+    id: 'usr-amara-o',
+    name: 'Amara Okafor',
+    email: 'amara.okafor@lagosfintech.ng',
+    avatar: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=120&auto=format&fit=crop&q=80',
+    status: 'active',
+    authTokenPrefix: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3ItYW1hcmEtbyIsImV4cCI6MTgwMDAwMDAwMH0.t4Y8...',
+    authProvider: 'phone',
+    signInTimestamp: new Date(Date.now() - 3600000 * 6.2).toISOString(),
+    hoursSinceSignIn: 6.2,
+    deviceInfo: {
+      model: 'Xiaomi 14 Ultra',
+      manufacturer: 'Xiaomi',
+      osVersion: 'Android 14 (HyperOS)',
+      appVersion: '1.2.0 (Build 42)',
+      fcmTokenPrefix: 'fcm_t88aL_xiaomi14_wP12',
+      ipAddress: '105.112.45.10',
+      locale: 'en_GB',
+    },
+    reviewStatus: 'pending_review',
+    reminderCount: 1,
+    lastRemindedAt: new Date(Date.now() - 3600000 * 2).toISOString(),
+    nextScheduledReminder: 'Next retry in 22h',
+    isEligibleForReminder: false, // In cooldown
+    forcePopupPending: false,
+  },
+  {
+    id: 'usr-lucas-m',
+    name: 'Lucas Morales',
+    email: 'lucas.m@madridcreative.es',
+    avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&auto=format&fit=crop&q=80',
+    status: 'active',
+    authTokenPrefix: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3ItbHVjYXMtbSIsImV4cCI6MTgwMDAwMDAwMH0.p9Q5...',
+    authProvider: 'google.com',
+    signInTimestamp: new Date(Date.now() - 3600000 * 1.1).toISOString(),
+    hoursSinceSignIn: 1.1,
+    deviceInfo: {
+      model: 'Google Pixel 7a (lynx)',
+      manufacturer: 'Google',
+      osVersion: 'Android 14 (API 34)',
+      appVersion: '1.2.0 (Build 42)',
+      fcmTokenPrefix: 'fcm_q11bZ_pixel7a_mL88',
+      ipAddress: '212.128.90.4',
+      locale: 'es_ES',
+    },
+    reviewStatus: 'pending_review',
+    reminderCount: 0,
+    nextScheduledReminder: 'Grace period (1.9h remaining)',
+    isEligibleForReminder: false, // In grace period (< 3 hours)
+    forcePopupPending: false,
+  },
+  {
+    id: 'usr-priya-s',
+    name: 'Priya Sharma',
+    email: 'priya.sharma@bangaloretech.in',
+    avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=120&auto=format&fit=crop&q=80',
+    status: 'verified',
+    authTokenPrefix: 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1aWQiOiJ1c3ItcHJpeWEtcyIsImV4cCI6MTgwMDAwMDAwMH0.w2R7...',
+    authProvider: 'google.com',
+    signInTimestamp: new Date(Date.now() - 3600000 * 5.8).toISOString(),
+    hoursSinceSignIn: 5.8,
+    deviceInfo: {
+      model: 'OnePlus 12 (CPH2573)',
+      manufacturer: 'OnePlus',
+      osVersion: 'Android 14 (OxygenOS 14)',
+      appVersion: '1.2.0 (Build 42)',
+      fcmTokenPrefix: 'fcm_r44vK_oneplus12_jN33',
+      ipAddress: '103.21.124.9',
+      locale: 'en_IN',
+    },
+    reviewStatus: 'pending_review',
+    reminderCount: 0,
+    nextScheduledReminder: 'Eligible for immediate push/popup',
+    isEligibleForReminder: true, // Signed in 5.8h ago, unreviewed
+    forcePopupPending: false,
+  },
+];
+

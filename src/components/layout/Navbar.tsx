@@ -16,10 +16,14 @@ import {
   Activity,
   Layers,
   Flame,
+  QrCode,
+  ShieldCheck,
+  Gift,
 } from 'lucide-react';
 import { AdminUser, ActiveModule } from '../../types';
 import { StorageService } from '../../services/storageService';
 import { firestoreSync, FirestoreConnectionStatus } from '../../services/firestoreSyncService';
+import { TwoFactorSettingsModal } from '../modals/TwoFactorSettingsModal';
 
 interface NavbarProps {
   adminUser: AdminUser;
@@ -28,6 +32,7 @@ interface NavbarProps {
   onLogout: () => void;
   onLockSession: () => void;
   onOpenSearch: () => void;
+  onOpen2FAModal?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -37,18 +42,33 @@ export const Navbar: React.FC<NavbarProps> = ({
   onLogout,
   onLockSession,
   onOpenSearch,
+  onOpen2FAModal,
 }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [is2FAModalOpen, setIs2FAModalOpen] = useState(false);
   const [dbStatus, setDbStatus] = useState<FirestoreConnectionStatus>('connecting');
   const [liveUserCount, setLiveUserCount] = useState<number>(0);
+  const [isGiftingEnabled, setIsGiftingEnabled] = useState<boolean>(
+    StorageService.getAppFeatureConfig().isGiftingEnabled
+  );
 
   useEffect(() => {
-    const unsub = firestoreSync.onStatusChange((status, count) => {
+    const unsubStatus = firestoreSync.onStatusChange((status, count) => {
       setDbStatus(status);
       setLiveUserCount(count);
     });
-    return unsub;
+
+    const unsubConfig = firestoreSync.listenToAppConfig((cfg) => {
+      if (cfg.isGiftingEnabled !== undefined) {
+        setIsGiftingEnabled(cfg.isGiftingEnabled);
+      }
+    });
+
+    return () => {
+      unsubStatus();
+      unsubConfig();
+    };
   }, []);
 
   const auditLogs = StorageService.getAuditLogs();
@@ -145,6 +165,23 @@ export const Navbar: React.FC<NavbarProps> = ({
           }`} />
           <span className="text-[10px] font-bold uppercase hidden xl:inline">
             {dbStatus === 'connected' ? 'Firestore Live' : 'Cloud Sync'}
+          </span>
+        </div>
+
+        {/* Gifting Feature State Pill */}
+        <div
+          onClick={() => onSelectModule('financials')}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs cursor-pointer transition-colors ${
+            isGiftingEnabled
+              ? 'bg-rose-500/10 border-rose-500/30 text-rose-300 hover:bg-rose-500/20'
+              : 'bg-slate-800/80 border-slate-700 text-slate-400 hover:bg-slate-800'
+          }`}
+          title={`APK Gifting Button: ${isGiftingEnabled ? 'ENABLED (Visible)' : 'DISABLED (Hidden)'} - Click to configure`}
+        >
+          <Gift className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+          <span className="hidden xl:inline text-[11px] text-slate-300 font-medium">Gifting:</span>
+          <span className={`text-[10px] font-bold ${isGiftingEnabled ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {isGiftingEnabled ? 'ON' : 'OFF'}
           </span>
         </div>
 
@@ -253,6 +290,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                   type="button"
                   onClick={() => {
                     setShowProfileMenu(false);
+                    if (onOpen2FAModal) onOpen2FAModal();
+                    else setIs2FAModalOpen(true);
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-500/15 text-xs text-rose-300 flex items-center gap-2 font-medium"
+                >
+                  <QrCode className="w-3.5 h-3.5 text-rose-400" />
+                  <span>2FA QR & Backup Codes</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProfileMenu(false);
                     onSelectModule('gateways');
                   }}
                   className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-xs text-slate-300 flex items-center gap-2"
@@ -287,6 +336,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           )}
         </div>
       </div>
+
+      {/* Global 2FA Settings Modal */}
+      <TwoFactorSettingsModal
+        isOpen={is2FAModalOpen}
+        onClose={() => setIs2FAModalOpen(false)}
+      />
     </header>
   );
 };

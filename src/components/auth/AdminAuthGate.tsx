@@ -1,88 +1,224 @@
-import React, { useState } from 'react';
-import { ShieldCheck, ShieldAlert, Lock, KeyRound, AlertTriangle, UserCheck, ArrowRight } from 'lucide-react';
-import { AdminUser } from '../../types';
+import React, { useState, useEffect } from 'react';
+import {
+  ShieldCheck,
+  ShieldAlert,
+  Lock,
+  KeyRound,
+  AlertTriangle,
+  UserCheck,
+  ArrowRight,
+  FileText,
+  Smartphone,
+  CheckCircle2,
+  Globe,
+} from 'lucide-react';
+import { AdminUser, TwoFactorSecurityConfig } from '../../types';
 import { StorageService } from '../../services/storageService';
+import { AdminSessionService } from '../../services/adminSessionService';
+import { TwoFactorSettingsModal } from '../modals/TwoFactorSettingsModal';
+import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged } from '../../services/firebase';
 
 interface AdminAuthGateProps {
   currentUser: AdminUser | null;
+  sessionExpiredNotice?: string | null;
   onAuthenticated: (user: AdminUser) => void;
   children: React.ReactNode;
 }
 
 export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
   currentUser,
+  sessionExpiredNotice,
   onAuthenticated,
   children,
 }) => {
-  const [emailInput, setEmailInput] = useState<string>('admin@7tasker.com');
-  const [pinInput, setPinInput] = useState<string>('784920');
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [emailInput, setEmailInput] = useState<string>('');
+  const [authMode, setAuthMode] = useState<'totp_pin' | 'backup_code'>('totp_pin');
+  const [pinInput, setPinInput] = useState<string>('');
+  const [errorMsg, setErrorMsg] = useState<string | null>(sessionExpiredNotice || null);
+  const [successInfoMsg, setSuccessInfoMsg] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState<boolean>(false);
+  const [isGoogleSigningIn, setIsGoogleSigningIn] = useState<boolean>(false);
   const [securityChallenge, setSecurityChallenge] = useState<boolean>(false);
+  const [is2FAModalOpen, setIs2FAModalOpen] = useState<boolean>(false);
+  const [firebaseUserEmail, setFirebaseUserEmail] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (sessionExpiredNotice) {
+      setErrorMsg(sessionExpiredNotice);
+    }
+  }, [sessionExpiredNotice]);
+
+  useEffect(() => {
+    const unsub = AdminSessionService.onSessionExpired((msg) => {
+      setErrorMsg(msg);
+    });
+    return () => unsub();
+  }, []);
+
+  // Monitor Firebase Auth state
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user && user.email) {
+        setFirebaseUserEmail(user.email);
+        try {
+          const idToken = await user.getIdToken();
+          // Verify with backend server
+          const res = await fetch('/api/admin/verify-or-claim', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${idToken}`,
+            },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.isAdmin) {
+              await user.getIdToken(true); // refresh token to include claim
+              const adminData = StorageService.getAdminUser();
+              adminData.email = user.email;
+              adminData.name = user.displayName || adminData.name;
+              onAuthenticated(adminData);
+            }
+          }
+        } catch {
+          // Fallback gracefully
+        }
+      } else {
+        setFirebaseUserEmail(null);
+      }
+    });
+    return () => unsubscribe();
+  }, [onAuthenticated]);
 
   // If already authenticated and strictly matches admin@7tasker.com, render children
   if (currentUser && StorageService.isAuthorizedAdmin(currentUser.email)) {
     return <>{children}</>;
   }
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  // Handle Google Sign-In with Firebase Authentication
+  const handleGoogleSignIn = async () => {
+    setIsGoogleSigningIn(true);
+    setErrorMsg(null);
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      const idToken = await user.getIdToken();
+
+      // Verify token on server and ensure admin custom claim
+      const verifyRes = await fetch('/api/admin/verify-or-claim', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+
+      if (!verifyRes.ok) {
+        const errData = await verifyRes.json().catch(() => ({}));
+        await signOut(auth);
+        throw new Error(errData.error || 'Server denied administrative authorization.');
+      }
+
+      const verifyData = await verifyRes.json();
+      if (!verifyData.isAdmin) {
+        await signOut(auth);
+        throw new Error('Account does not possess verified admin privileges.');
+      }
+
+      // Force token refresh to capture new custom claim in JWT
+      await user.getIdToken(true);
+
+      const adminData = StorageService.getAdminUser();
+      adminData.email = user.email || 'admin@7tasker.com';
+      adminData.name = user.displayName || 'Administrator';
+      StorageService.addAuditLog({
+        actor: adminData.email,
+        action: 'ROOT_ADMIN_FIREBASE_AUTH',
+        module: 'Security',
+        severity: 'info',
+        details: `Administrator authenticated via Google OAuth with server-verified admin: true claim (UID: ${user.uid}).`,
+      });
+
+      setSuccessInfoMsg('Cryptographic token verified by backend server.');
+      onAuthenticated(adminData);
+    } catch (err: any) {
+      console.warn('[Auth] Sign-in error:', err?.message);
+      setErrorMsg(err?.message || 'Failed to authenticate via Google Firebase Auth.');
+    } finally {
+      setIsGoogleSigningIn(false);
+    }
+  };
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsVerifying(true);
     setErrorMsg(null);
+    setSuccessInfoMsg(null);
 
-    setTimeout(() => {
-      const cleanEmail = emailInput.trim().toLowerCase();
-      
-      // Strict access validation: ONLY admin@7tasker.com is permitted
-      if (cleanEmail !== 'admin@7tasker.com') {
-        setIsVerifying(false);
-        setSecurityChallenge(true);
-        setErrorMsg(`Access Denied. Administrative access is strictly restricted to admin@7tasker.com. Account "${cleanEmail}" does not possess Root Admin privileges.`);
-        
-        // Log unauthorized attempt into security audit log
-        StorageService.addAuditLog({
-          actor: cleanEmail,
-          action: 'UNAUTHORIZED_LOGIN_BLOCKED',
-          module: 'Security',
-          severity: 'security_alert',
-          details: `Rejected login attempt by unauthorized identity "${cleanEmail}". Mandatory RBAC policy: admin@7tasker.com only.`,
-          ipAddress: '198.51.100.92',
-        });
-        return;
-      }
-
-      // Check PIN
-      if (pinInput !== '784920') {
-        setIsVerifying(false);
-        setErrorMsg('Invalid 2FA Hardware Security PIN. Please enter the 6-digit administrator passcode.');
-        return;
-      }
-
-      // Success
+    const cleanEmail = emailInput.trim().toLowerCase();
+    
+    // Strict access validation: ONLY admin@7tasker.com is permitted
+    if (cleanEmail !== 'admin@7tasker.com') {
       setIsVerifying(false);
-      const adminData = StorageService.getAdminUser();
+      setSecurityChallenge(true);
+      setErrorMsg(`Access Denied. Administrative access is strictly restricted to admin@7tasker.com. Account "${cleanEmail}" does not possess Root Admin privileges.`);
+      
+      StorageService.addAuditLog({
+        actor: cleanEmail,
+        action: 'UNAUTHORIZED_LOGIN_BLOCKED',
+        module: 'Security',
+        severity: 'security_alert',
+        details: `Rejected login attempt by unauthorized identity "${cleanEmail}". Mandatory RBAC policy: admin@7tasker.com only.`,
+        ipAddress: '198.51.100.92',
+      });
+      return;
+    }
+
+    // Check code using StorageService verifyAndConsumeTwoFactorCode
+    const verifyResult = StorageService.verifyAndConsumeTwoFactorCode(pinInput);
+
+    if (!verifyResult.success) {
+      setIsVerifying(false);
+      setErrorMsg(verifyResult.message || 'Invalid 2FA code or security PIN. Please check your Authenticator app or backup codes.');
+      return;
+    }
+
+    try {
+      // Authenticate with server to receive a cryptographically verifiable, expiring HMAC session token
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail, pin: pinInput, durationMinutes: 60 }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setIsVerifying(false);
+        setErrorMsg(data.message || 'Server authorization failed. Please verify credentials.');
+        return;
+      }
+
+      // Persist active session with cryptographic expiring token
+      AdminSessionService.saveSession({
+        token: data.token,
+        expiresAt: data.expiresAt,
+        user: data.user,
+      });
+
       StorageService.addAuditLog({
         actor: 'admin@7tasker.com',
-        action: 'ROOT_ADMIN_AUTHENTICATED',
+        action: verifyResult.method === 'backup_code' ? 'ROOT_ADMIN_2FA_BACKUP_LOGIN' : 'ROOT_ADMIN_AUTHENTICATED',
         module: 'Security',
         severity: 'info',
-        details: 'Admin verified via 2FA token. Session issued with Tier-1 Root privileges.',
+        details: `Admin verified via ${verifyResult.method.toUpperCase()} (${verifyResult.message || 'Standard'}). Cryptographic expiring session issued.`,
       });
-      onAuthenticated(adminData);
-    }, 600);
-  };
 
-  const handleQuickAuthorizedLogin = () => {
-    setEmailInput('admin@7tasker.com');
-    setPinInput('784920');
-    setErrorMsg(null);
-    setSecurityChallenge(false);
-  };
-
-  const handleTestUnauthorizedAttempt = () => {
-    setEmailInput('unauthorized_user@external-domain.org');
-    setPinInput('123456');
-    setErrorMsg(null);
+      setIsVerifying(false);
+      onAuthenticated(data.user);
+    } catch (err: any) {
+      setIsVerifying(false);
+      setErrorMsg('Could not establish connection to administrative authentication service.');
+    }
   };
 
   return (
@@ -109,19 +245,14 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
 
         {/* Security Notice Card */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-2xl backdrop-blur-xl ring-1 ring-white/5">
-          <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-5">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                <Lock className="w-4 h-4" />
-              </div>
-              <div>
-                <h2 className="text-sm font-semibold text-slate-200">Zero-Trust Access Gate</h2>
-                <p className="text-xs text-slate-400">Strict Identity Verification</p>
-              </div>
+          <div className="flex items-center gap-2.5 pb-4 border-b border-slate-800 mb-5">
+            <div className="p-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <Lock className="w-4 h-4" />
             </div>
-            <span className="text-[11px] font-mono font-medium px-2.5 py-1 rounded bg-slate-800 text-slate-300 border border-slate-700">
-              RBAC: Level 1
-            </span>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-200">Zero-Trust Access Gate</h2>
+              <p className="text-xs text-slate-400">Strict 2FA & Identity Verification</p>
+            </div>
           </div>
 
           <div className="p-3 mb-5 rounded-xl bg-slate-950/80 border border-slate-800/80 text-xs text-slate-300 flex items-start gap-2.5">
@@ -147,6 +278,32 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
             </div>
           )}
 
+          {/* Option 1: Firebase Google Authentication */}
+          <button
+            type="button"
+            onClick={handleGoogleSignIn}
+            disabled={isGoogleSigningIn}
+            className="w-full mb-4 py-2.5 px-4 bg-slate-800/90 hover:bg-slate-700 text-white font-medium text-xs rounded-xl border border-slate-700 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 shadow-sm"
+          >
+            {isGoogleSigningIn ? (
+              <>
+                <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <span>Verifying Firebase OAuth Token...</span>
+              </>
+            ) : (
+              <>
+                <Globe className="w-4 h-4 text-amber-400" />
+                <span>Sign in with Google (Firebase Admin OAuth)</span>
+              </>
+            )}
+          </button>
+
+          <div className="relative flex py-1 items-center mb-4">
+            <div className="flex-grow border-t border-slate-800"></div>
+            <span className="flex-shrink mx-3 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Or Super Admin PIN & 2FA</span>
+            <div className="flex-grow border-t border-slate-800"></div>
+          </div>
+
           <form onSubmit={handleLoginSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">
@@ -158,7 +315,7 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
                   required
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
-                  placeholder="admin@7tasker.com"
+                  placeholder="Enter your email"
                   className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500 transition-all font-mono"
                 />
               </div>
@@ -167,20 +324,51 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-medium text-slate-300">
-                  2FA Passcode / Security PIN
+                  {authMode === 'totp_pin' ? '2FA Code / Hardware PIN' : 'Emergency Backup Code'}
                 </label>
-                <span className="text-[11px] text-slate-400">Default: 784920</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(authMode === 'totp_pin' ? 'backup_code' : 'totp_pin');
+                    setPinInput('');
+                    setErrorMsg(null);
+                  }}
+                  className="text-[11px] text-rose-400 hover:text-rose-300 hover:underline cursor-pointer flex items-center gap-1"
+                >
+                  {authMode === 'totp_pin' ? (
+                    <>
+                      <FileText className="w-3 h-3" />
+                      <span>Use Backup Code</span>
+                    </>
+                  ) : (
+                    <>
+                      <Smartphone className="w-3 h-3" />
+                      <span>Use Authenticator / PIN</span>
+                    </>
+                  )}
+                </button>
               </div>
+
               <div className="relative">
                 <input
-                  type="password"
+                  type={authMode === 'totp_pin' ? 'password' : 'text'}
                   required
-                  maxLength={6}
+                  maxLength={authMode === 'totp_pin' ? 6 : 10}
                   value={pinInput}
                   onChange={(e) => setPinInput(e.target.value)}
-                  placeholder="••••••"
+                  placeholder={authMode === 'totp_pin' ? '••••••' : 'e.g. 8492-1049'}
                   className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-rose-500/50 focus:border-rose-500 transition-all font-mono tracking-widest text-center"
                 />
+              </div>
+              <div className="flex justify-between items-center text-[10px] text-slate-400 mt-1">
+                <span>{authMode === 'totp_pin' ? '6-digit Authenticator code or Hardware PIN' : '8-digit one-time recovery code'}</span>
+                <button
+                  type="button"
+                  onClick={() => setIs2FAModalOpen(true)}
+                  className="text-amber-400 hover:underline cursor-pointer"
+                >
+                  2FA Setup / View Codes
+                </button>
               </div>
             </div>
 
@@ -203,31 +391,6 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
               )}
             </button>
           </form>
-
-          {/* Quick Simulation Toggles for Security Verification Testing */}
-          <div className="mt-6 pt-5 border-t border-slate-800/80">
-            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2.5">
-              Access Control Quick Tests
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={handleQuickAuthorizedLogin}
-                className="px-2.5 py-2 rounded-lg bg-slate-800/90 hover:bg-slate-700/90 border border-slate-700 text-[11px] font-medium text-emerald-300 text-left transition-colors flex items-center gap-1.5"
-              >
-                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Auto-Fill Admin</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleTestUnauthorizedAttempt}
-                className="px-2.5 py-2 rounded-lg bg-slate-800/90 hover:bg-slate-700/90 border border-slate-700 text-[11px] font-medium text-rose-300 text-left transition-colors flex items-center gap-1.5"
-              >
-                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Test Non-Admin Block</span>
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Footer Security Badges */}
@@ -237,11 +400,18 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
             TLS 1.3 Encrypted
           </span>
           <span>•</span>
-          <span>SHA-256 Audit Trail</span>
+          <span>RFC 6238 TOTP</span>
           <span>•</span>
-          <span>IP Whitelist Active</span>
+          <span>SHA-256 Audit Trail</span>
         </div>
       </div>
+
+      {/* 2FA Setup & QR Code Modal */}
+      <TwoFactorSettingsModal
+        isOpen={is2FAModalOpen}
+        onClose={() => setIs2FAModalOpen(false)}
+      />
     </div>
   );
 };
+

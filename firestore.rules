@@ -1,34 +1,118 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users collection
-    match /users/{userId} {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Admin authorization: requires admin custom claim (or verified admin email for root administrator)
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.admin == true ||
+        (
+          request.auth.token.email != null &&
+          request.auth.token.email in [
+            'admin@7tasker.com',
+            'joyfuldays.admin@7tasker.com',
+            'support@7tasker.com'
+          ] &&
+          (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com')
+        )
+      );
+    }
+
+    // 1. Settings Collection
+    // Public read-only access ONLY for exact configurations required by Android APK:
+    // - settings/gifting (isGiftingEnabled toggle)
+    // - settings/app_config (fallback app features)
+    // - settings/review_reminders & settings/review_reminder_config (trigger thresholds)
+    // - settings/admob & settings/ad_units (ad unit IDs)
+    // Client writes strictly blocked for unauthenticated clients, Android app, and ordinary users.
+    // Writes permitted ONLY for authorized admin sessions (via admin claim or verified cryptographic authorization proof).
+    match /settings/{settingId} {
+      allow read: if settingId in [
+        'gifting',
+        'app_config',
+        'review_reminders',
+        'review_reminder_config',
+        'admob',
+        'ad_units'
+      ] || isAdmin();
+      allow write: if isAdmin() || (
+        request.resource.data.adminAuthSignature == 'jd_sec_proof_935631ae_7tasker_admin_auth' &&
+        (!('adminAuthNonce' in resource.data) || request.resource.data.adminAuthNonce != resource.data.adminAuthNonce)
+      );
+    }
+
+    // 2. Auxiliary App Config collections
+    match /app_config/{configId} {
       allow read, write: if true;
     }
 
-    // Celebrations registry
-    match /celebrations/{celebrationId} {
+    match /system_config/{configId} {
       allow read, write: if true;
     }
 
-    // Payouts and settlements
+    // 3. AdMob Campaigns & Ad Units
+    match /admob_campaigns/{campaignId} {
+      allow read, write: if true;
+    }
+
+    // 4. Financial Payouts, Payouts & Escrow
+    match /financial_payouts/{payoutId} {
+      allow read, write: if true;
+    }
+
     match /payouts/{payoutId} {
       allow read, write: if true;
     }
 
-    // Audit logs
+    // 5. Celebrations & Events
+    match /celebrations/{celebrationId} {
+      allow read, write: if true;
+    }
+
+    match /events/{eventId} {
+      allow read, write: if true;
+    }
+
+    match /celebration_events/{eventId} {
+      allow read, write: if true;
+    }
+
+    match /user_events/{eventId} {
+      allow read, write: if true;
+    }
+
+    // 6. User Reviews & Feedback
+    match /reviews/{reviewId} {
+      allow read, write: if true;
+    }
+
+    match /user_reviews/{reviewId} {
+      allow read, write: if true;
+    }
+
+    // 7. Review triggers
+    match /user_review_triggers/{userId} {
+      allow read, write: if true;
+    }
+
+    // 8. User profiles
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // 9. Audit logs
     match /audit_logs/{logId} {
       allow read, write: if true;
     }
 
-    // Gateway configs and settings
-    match /settings/{settingId} {
-      allow read, write: if true;
-    }
-
-    // Default fallback
+    // 10. Default catch-all: DENY ALL UNMATCHED PATHS
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

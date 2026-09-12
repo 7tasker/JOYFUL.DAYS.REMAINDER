@@ -12,6 +12,7 @@ import {
   TrendingUp,
   HardDrive,
   ExternalLink,
+  Star,
 } from 'lucide-react';
 import { ActiveModule } from '../../types';
 import { StorageService } from '../../services/storageService';
@@ -28,8 +29,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onQuickBackup,
 }) => {
   const tangoConfig = StorageService.getTangoConfig();
-  const stripeConfig = StorageService.getStripeConfig();
-  const paypalConfig = StorageService.getPayPalConfig();
 
   const navItems = [
     {
@@ -37,48 +36,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Executive Overview',
       subtitle: 'Platform KPIs & Activity',
       icon: LayoutDashboard,
-      badge: 'Live',
-      badgeColor: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
     },
     {
       id: 'gateways' as ActiveModule,
       label: 'API Keys & Gateways',
-      subtitle: 'Stripe, PayPal & Tango',
+      subtitle: 'Stripe, PayPal & Play Store',
       icon: KeyRound,
-      badge: `${(stripeConfig.enabled ? 1 : 0) + (paypalConfig.enabled ? 1 : 0)} Active`,
-      badgeColor: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20',
     },
     {
       id: 'admob' as ActiveModule,
       label: 'AdMob Monetization',
       subtitle: 'Revenue & eCPM Analytics',
       icon: BarChart3,
-      badge: '$24.5k',
-      badgeColor: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
     },
     {
       id: 'celebrations' as ActiveModule,
       label: 'Users & Celebrations',
       subtitle: 'Event Stats & RSVP Data',
       icon: Users,
-      badge: '142k+',
-      badgeColor: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
     },
     {
       id: 'backups' as ActiveModule,
       label: 'Backups & Audit Logs',
       subtitle: 'Data Snapshots & Security',
       icon: Database,
-      badge: 'SHA-256',
-      badgeColor: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
     },
     {
       id: 'financials' as ActiveModule,
       label: 'Financials & Commissions',
       subtitle: 'GMV & Payout Ledger',
       icon: Receipt,
-      badge: '3.5% Cut',
-      badgeColor: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+    },
+    {
+      id: 'reviews' as ActiveModule,
+      label: 'User Reviews & Popups',
+      subtitle: 'In-App & Push Monitor',
+      icon: Star,
     },
   ];
 
@@ -123,14 +116,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </span>
                 </div>
               </div>
-
-              {item.badge && (
-                <span
-                  className={`text-[10px] font-mono font-medium px-1.5 py-0.5 rounded border shrink-0 ${item.badgeColor}`}
-                >
-                  {item.badge}
-                </span>
-              )}
             </button>
           );
         })}

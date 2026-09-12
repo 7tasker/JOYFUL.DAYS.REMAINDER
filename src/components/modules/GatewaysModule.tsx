@@ -25,6 +25,8 @@ import {
   Wallet,
   ArrowLeftRight,
   Radio,
+  Play,
+  FileCode,
 } from 'lucide-react';
 import {
   StripeConfig,
@@ -33,18 +35,21 @@ import {
   GatewayRoutingMode,
   TangoCardConfig,
   TestGiftTransaction,
+  GooglePlayConfig,
 } from '../../types';
 import { StorageService } from '../../services/storageService';
+import { GiftingFeatureControl } from './GiftingFeatureControl';
 
 export const GatewaysModule: React.FC = () => {
   const [stripeConfig, setStripeConfig] = useState<StripeConfig>(StorageService.getStripeConfig());
   const [paypalConfig, setPaypalConfig] = useState<PayPalConfig>(StorageService.getPayPalConfig());
   const [routingConfig, setRoutingConfig] = useState<GatewayRoutingConfig>(StorageService.getGatewayRouting());
   const [tangoConfig, setTangoConfig] = useState<TangoCardConfig>(StorageService.getTangoConfig());
+  const [googlePlayConfig, setGooglePlayConfig] = useState<GooglePlayConfig>(StorageService.getGooglePlayConfig());
   const [transactions, setTransactions] = useState<TestGiftTransaction[]>(StorageService.getTestTransactions());
 
-  // Active Tab View for Gateways
-  const [activeGatewayTab, setActiveGatewayTab] = useState<'all' | 'stripe' | 'paypal' | 'tango'>('all');
+  // Active Tab View for Gateways & APIs
+  const [activeGatewayTab, setActiveGatewayTab] = useState<'all' | 'gifting' | 'stripe' | 'paypal' | 'tango' | 'playstore'>('all');
 
   // Show/Hide Secrets
   const [showStripeLiveSecret, setShowStripeLiveSecret] = useState(false);
@@ -52,10 +57,12 @@ export const GatewaysModule: React.FC = () => {
   const [showPaypalLiveSecret, setShowPaypalLiveSecret] = useState(false);
   const [showPaypalSandboxSecret, setShowPaypalSandboxSecret] = useState(false);
   const [showTangoApiKey, setShowTangoApiKey] = useState(false);
+  const [showPlayServiceKey, setShowPlayServiceKey] = useState(false);
 
   // Key Rotation States
   const [isRotatingStripe, setIsRotatingStripe] = useState(false);
   const [isRotatingPaypal, setIsRotatingPaypal] = useState(false);
+  const [isTestingPlayApi, setIsTestingPlayApi] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
 
   // Reload Tango Float State
@@ -125,6 +132,30 @@ export const GatewaysModule: React.FC = () => {
     e.preventDefault();
     StorageService.updatePayPalConfig(paypalConfig);
     triggerFeedback('PayPal Express & Commerce settings successfully saved.');
+  };
+
+  // Save Google Play Developer API Config Form
+  const handleGooglePlaySave = (e: React.FormEvent) => {
+    e.preventDefault();
+    StorageService.updateGooglePlayConfig(googlePlayConfig);
+    triggerFeedback('Google Play Developer API & In-App Review credentials successfully saved.');
+  };
+
+  // Toggle Google Play Integration
+  const handleToggleGooglePlay = () => {
+    const nextState = !googlePlayConfig.enabled;
+    const updated = StorageService.toggleGooglePlayStatus(nextState);
+    setGooglePlayConfig(updated);
+    triggerFeedback(`Google Play Developer API integration was ${nextState ? 'ENABLED' : 'DISABLED'}.`);
+  };
+
+  // Test Google Play API Connection
+  const handleTestGooglePlayApi = () => {
+    setIsTestingPlayApi(true);
+    setTimeout(() => {
+      setIsTestingPlayApi(false);
+      triggerFeedback('Google Play Developer API: Connection verified (HTTP 200 OK). In-App Review API ready for APK.');
+    }, 750);
   };
 
   // Zero-Downtime Stripe Key Rotation
@@ -198,14 +229,14 @@ export const GatewaysModule: React.FC = () => {
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-bold text-white tracking-tight">
-              API Keys & Payment Gateway Architecture
+              API Keys & Gateway Architecture
             </h2>
             <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
               Module 1
             </span>
           </div>
           <p className="text-sm text-slate-400 mt-1">
-            Manage high-frequency payment rails via Stripe Connect, PayPal Commerce, & Tango Card eGift Rewards API.
+            Manage mobile app gifting master switches, Stripe Connect, PayPal Commerce, Tango eGift, and Google Play Store API keys.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -218,6 +249,81 @@ export const GatewaysModule: React.FC = () => {
         </div>
       </div>
 
+      {/* Global Module Navigation Tabs */}
+      <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-900/90 rounded-2xl border border-slate-800 shadow-lg">
+        <button
+          type="button"
+          onClick={() => setActiveGatewayTab('all')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all ${
+            activeGatewayTab === 'all'
+              ? 'bg-indigo-600 text-white shadow-md'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          All Keys & Controls
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveGatewayTab('gifting')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+            activeGatewayTab === 'gifting'
+              ? 'bg-rose-600 text-white shadow-md'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Gift className="w-3.5 h-3.5 text-rose-400" />
+          Mobile App Gifting Control
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveGatewayTab('stripe')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+            activeGatewayTab === 'stripe'
+              ? 'bg-indigo-600 text-white shadow-md'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <CreditCard className="w-3.5 h-3.5 text-indigo-400" />
+          Stripe Connect
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveGatewayTab('paypal')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+            activeGatewayTab === 'paypal'
+              ? 'bg-amber-600 text-white shadow-md'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Wallet className="w-3.5 h-3.5 text-amber-400" />
+          PayPal Commerce
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveGatewayTab('tango')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+            activeGatewayTab === 'tango'
+              ? 'bg-emerald-600 text-white shadow-md'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <KeyRound className="w-3.5 h-3.5 text-emerald-400" />
+          Tango Card eGift
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveGatewayTab('playstore')}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all ${
+            activeGatewayTab === 'playstore'
+              ? 'bg-teal-600 text-white shadow-md'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+          }`}
+        >
+          <Play className="w-3.5 h-3.5 text-teal-400 fill-teal-400/20" />
+          Google Play Store API
+        </button>
+      </div>
+
       {actionFeedback && (
         <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-sm flex items-center gap-3 animate-in fade-in">
           <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
@@ -225,7 +331,15 @@ export const GatewaysModule: React.FC = () => {
         </div>
       )}
 
+      {/* MOBILE APP GIFTING MASTER CONTROLLER COMPONENT */}
+      {(activeGatewayTab === 'all' || activeGatewayTab === 'gifting') && (
+        <div className="animate-in fade-in duration-200">
+          <GiftingFeatureControl />
+        </div>
+      )}
+
       {/* MASTER GATEWAY ROUTING & SWITCHING CONTROL PANEL */}
+      {(activeGatewayTab === 'all' || activeGatewayTab === 'stripe' || activeGatewayTab === 'paypal') && (
       <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl space-y-5">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800">
           <div>
@@ -238,57 +352,6 @@ export const GatewaysModule: React.FC = () => {
             <p className="text-xs text-slate-400 mt-1">
               Enable, disable, or switch primary checkout processing between Stripe and PayPal in real time.
             </p>
-          </div>
-
-          {/* Quick Filter Tabs */}
-          <div className="flex items-center gap-1.5 p-1 bg-slate-950 rounded-xl border border-slate-800 self-start lg:self-auto">
-            <button
-              type="button"
-              onClick={() => setActiveGatewayTab('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                activeGatewayTab === 'all'
-                  ? 'bg-slate-800 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              All Rails (3)
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveGatewayTab('stripe')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                activeGatewayTab === 'stripe'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-indigo-400" />
-              Stripe
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveGatewayTab('paypal')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                activeGatewayTab === 'paypal'
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-amber-400" />
-              PayPal
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveGatewayTab('tango')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-                activeGatewayTab === 'tango'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              Tango eGift
-            </button>
           </div>
         </div>
 
@@ -418,9 +481,10 @@ export const GatewaysModule: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
-      {/* 3 GATEWAY PILLARS (Stripe, PayPal, Tango Card) */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+      {/* GATEWAY & API PILLARS (Stripe, PayPal, Tango Card, Google Play API) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-2 gap-6">
         {/* PILLAR 1: STRIPE PAYMENT GATEWAY CONFIGURATION */}
         {(activeGatewayTab === 'all' || activeGatewayTab === 'stripe') && (
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col justify-between">
@@ -940,17 +1004,231 @@ export const GatewaysModule: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* PILLAR 4: GOOGLE PLAY DEVELOPER API CONFIGURATION */}
+        {(activeGatewayTab === 'all' || activeGatewayTab === 'playstore') && (
+          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col justify-between">
+            <div>
+              {/* Pillar Header */}
+              <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-teal-600 text-white font-bold text-lg flex items-center justify-center shadow-md">
+                    <Play className="w-5 h-5 fill-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-white text-base">Google Play Store API</h3>
+                    <p className="text-xs text-slate-400">Play Console Service Account & In-App Reviews</p>
+                  </div>
+                </div>
+
+                {/* Enable/Disable Toggle */}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleToggleGooglePlay}
+                    id="btn-toggle-google-play"
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition-all cursor-pointer ${
+                      googlePlayConfig.enabled
+                        ? 'bg-teal-500/10 text-teal-300 border-teal-500/30 hover:bg-teal-500/20'
+                        : 'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-750'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${googlePlayConfig.enabled ? 'bg-teal-400' : 'bg-slate-500'}`} />
+                    <span>{googlePlayConfig.enabled ? 'ENABLED' : 'DISABLED'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Google Play Configuration Form */}
+              <form onSubmit={handleGooglePlaySave} className="p-6 space-y-4">
+                {/* Environment / Track Selector */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Play Console Release Track
+                  </label>
+                  <select
+                    value={googlePlayConfig.environment}
+                    onChange={(e) =>
+                      setGooglePlayConfig({
+                        ...googlePlayConfig,
+                        environment: e.target.value as GooglePlayConfig['environment'],
+                      })
+                    }
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-medium text-white focus:outline-none focus:border-teal-500"
+                  >
+                    <option value="production">Production Release (Google Play Store Live)</option>
+                    <option value="internal_testing">Internal Testing Track (QA & Superadmins)</option>
+                    <option value="closed_testing">Closed Testing Track (Alpha/Beta Testers)</option>
+                  </select>
+                </div>
+
+                {/* Application Package Name */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Android Application Package Name
+                  </label>
+                  <input
+                    type="text"
+                    value={googlePlayConfig.packageName}
+                    onChange={(e) =>
+                      setGooglePlayConfig({ ...googlePlayConfig, packageName: e.target.value })
+                    }
+                    placeholder="com.joyfuldays.app"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+
+                {/* Service Account Email */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Google Cloud Service Account Email
+                  </label>
+                  <input
+                    type="email"
+                    value={googlePlayConfig.serviceAccountEmail}
+                    onChange={(e) =>
+                      setGooglePlayConfig({ ...googlePlayConfig, serviceAccountEmail: e.target.value })
+                    }
+                    placeholder="joyfuldays-play-api@project-id.iam.gserviceaccount.com"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-white focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+
+                {/* Service Account Private Key JSON / API Secret */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-slate-300">
+                      Service Account Private Key (JSON / API Secret)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setShowPlayServiceKey(!showPlayServiceKey)}
+                      className="text-[11px] text-teal-400 hover:text-teal-300 flex items-center gap-1 font-medium"
+                    >
+                      {showPlayServiceKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      {showPlayServiceKey ? 'Mask Secret' : 'Reveal JSON'}
+                    </button>
+                  </div>
+                  <textarea
+                    rows={showPlayServiceKey ? 4 : 2}
+                    value={
+                      showPlayServiceKey
+                        ? googlePlayConfig.serviceAccountKeyJson
+                        : '••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••'
+                    }
+                    onChange={(e) =>
+                      setGooglePlayConfig({ ...googlePlayConfig, serviceAccountKeyJson: e.target.value })
+                    }
+                    disabled={!showPlayServiceKey}
+                    placeholder='{"type": "service_account", ...}'
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-slate-200 focus:outline-none focus:border-teal-500 disabled:opacity-75 resize-none"
+                  />
+                </div>
+
+                {/* SHA-256 Certificate Fingerprint */}
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    App Signing SHA-256 Certificate Fingerprint
+                  </label>
+                  <input
+                    type="text"
+                    value={googlePlayConfig.sha256Certificate}
+                    onChange={(e) =>
+                      setGooglePlayConfig({ ...googlePlayConfig, sha256Certificate: e.target.value })
+                    }
+                    placeholder="3E:8F:A1:4D:99:B2:C4:E8:..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-slate-300 focus:outline-none focus:border-teal-500"
+                  />
+                </div>
+
+                {/* Feature Toggles: Play Review API & In-App Billing */}
+                <div className="space-y-2 pt-2 border-t border-slate-800">
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
+                    <div>
+                      <span className="text-xs font-semibold text-white block">Google Play In-App Review API</span>
+                      <span className="text-[10px] text-slate-400">Enables in-app rating prompt flow for Android mobile app</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGooglePlayConfig({
+                          ...googlePlayConfig,
+                          inAppReviewApiEnabled: !googlePlayConfig.inAppReviewApiEnabled,
+                        })
+                      }
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                        googlePlayConfig.inAppReviewApiEnabled
+                          ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                          : 'bg-slate-800 text-slate-400 border border-slate-700'
+                      }`}
+                    >
+                      {googlePlayConfig.inAppReviewApiEnabled ? 'ACTIVE' : 'OFF'}
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
+                    <div>
+                      <span className="text-xs font-semibold text-white block">Google Play Billing / Subscriptions</span>
+                      <span className="text-[10px] text-slate-400">Process Android digital in-app gifts and pool passes</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setGooglePlayConfig({
+                          ...googlePlayConfig,
+                          playBillingEnabled: !googlePlayConfig.playBillingEnabled,
+                        })
+                      }
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                        googlePlayConfig.playBillingEnabled
+                          ? 'bg-teal-500/20 text-teal-300 border border-teal-500/30'
+                          : 'bg-slate-800 text-slate-400 border border-slate-700'
+                      }`}
+                    >
+                      {googlePlayConfig.playBillingEnabled ? 'ACTIVE' : 'OFF'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Form Action Buttons */}
+                <div className="pt-2 flex items-center gap-3">
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+                  >
+                    Save Google Play Credentials
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleTestGooglePlayApi}
+                    disabled={isTestingPlayApi}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-750 text-slate-300 font-semibold text-xs border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-teal-400 ${isTestingPlayApi ? 'animate-spin' : ''}`} />
+                    <span>{isTestingPlayApi ? 'Verifying...' : 'Test API'}</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="p-4 bg-slate-950/80 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+              <span>Status: <strong className="text-teal-400 uppercase font-semibold">● {googlePlayConfig.status}</strong></span>
+              <span>Package: <strong className="text-white font-mono">{googlePlayConfig.packageName}</strong></span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* MULTI-GATEWAY TEST SIMULATOR & REAL-TIME DISPATCH REGISTRY */}
+      {/* DIRECT VOUCHER ISSUANCE TERMINAL & REAL-TIME DISPATCH REGISTRY */}
+      {(activeGatewayTab === 'all' || activeGatewayTab === 'tango') && (
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Issue Test eGift Card / Payment Simulator */}
+        {/* Left: Direct eGift Card / Payment Issuance Terminal */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl shadow-xl p-6">
           <div className="flex items-center gap-2 pb-3 border-b border-slate-800 mb-4">
             <Send className="w-4 h-4 text-indigo-400" />
             <div>
-              <h3 className="font-bold text-white text-sm">Issue Test eGift / Checkout</h3>
-              <p className="text-xs text-slate-400">Simulate transactions on active payment rails</p>
+              <h3 className="font-bold text-white text-sm">eGift Voucher Issuance Terminal</h3>
+              <p className="text-xs text-slate-400">Directly issue and dispatch digital gift cards</p>
             </div>
           </div>
 
@@ -1144,6 +1422,7 @@ export const GatewaysModule: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 };

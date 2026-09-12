@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, X, ArrowRight, Key, BarChart3, Users, Database, Receipt, Calendar } from 'lucide-react';
+import { Search, X, ArrowRight, Key, BarChart3, Users, Database, Receipt, Calendar, Star } from 'lucide-react';
 import { ActiveModule } from '../../types';
 import { StorageService } from '../../services/storageService';
 
@@ -43,6 +43,9 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     { title: 'Celebration Event Registry & RSVPs', module: 'celebrations' as ActiveModule, icon: Calendar, category: 'Events' },
     { title: 'Database Backups & SHA-256 Hashes', module: 'backups' as ActiveModule, icon: Database, category: 'Infrastructure' },
     { title: 'Financial Reporting & 3.5% Commission', module: 'financials' as ActiveModule, icon: Receipt, category: 'Financials' },
+    { title: 'User Reviews & Ratings (Google Play In-App)', module: 'reviews' as ActiveModule, icon: Star, category: 'Feedback & Ratings' },
+    { title: 'In-App Review Popups & Push Reminder Engine', module: 'reviews' as ActiveModule, icon: Star, category: 'Automations' },
+    { title: 'User Telemetry, Device Models & Sign-in Elapsed', module: 'reviews' as ActiveModule, icon: Users, category: 'Telemetry' },
   ];
 
   const filteredLinks = quickLinks.filter(

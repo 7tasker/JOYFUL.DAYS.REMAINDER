@@ -1,9 +1,21 @@
+import * as OTPAuth from 'otpauth';
+import { AdminSessionService } from './adminSessionService';
 import {
   AdminUser,
+  TwoFactorSecurityConfig,
+  AppFeatureConfig,
+  ReviewReminderConfig,
+  UserReview,
+  UserWithReviewDetails,
+  BackupCode,
   StripeConfig,
   PayPalConfig,
   GatewayRoutingConfig,
   TangoCardConfig,
+  AdMobCredentials,
+  AdMobSettingsConfig,
+  AppEngagementAnalytics,
+  AdEventMetrics,
   AdUnitConfig,
   AdMobDailyStat,
   AdMobCountryRevenue,
@@ -14,13 +26,24 @@ import {
   FinancialSummary,
   HostPayoutLedger,
   TestGiftTransaction,
+  GooglePlayConfig,
 } from '../types';
 import {
   INITIAL_ADMIN_USER,
+  INITIAL_TWO_FACTOR_CONFIG,
+  INITIAL_APP_FEATURE_CONFIG,
+  INITIAL_REVIEW_REMINDER_CONFIG,
+  INITIAL_USER_REVIEWS,
+  INITIAL_USERS_WITH_REVIEWS,
   INITIAL_STRIPE_CONFIG,
   INITIAL_PAYPAL_CONFIG,
   INITIAL_GATEWAY_ROUTING,
   INITIAL_TANGO_CARD_CONFIG,
+  INITIAL_GOOGLE_PLAY_CONFIG,
+  INITIAL_ADMOB_CREDENTIALS,
+  INITIAL_ADMOB_SETTINGS,
+  INITIAL_ENGAGEMENT_ANALYTICS,
+  INITIAL_AD_EVENT_METRICS,
   INITIAL_TEST_TRANSACTIONS,
   INITIAL_AD_UNITS,
   INITIAL_ADMOB_DAILY_STATS,
@@ -35,10 +58,16 @@ import {
 
 const STORAGE_KEYS = {
   AUTH_SESSION: 'joyful_admin_session_v1',
+  TWO_FACTOR_CONFIG: 'joyful_2fa_config_v2',
   STRIPE_CONFIG: 'joyful_stripe_config_v1',
   PAYPAL_CONFIG: 'joyful_paypal_config_v1',
   GATEWAY_ROUTING: 'joyful_gateway_routing_v1',
   TANGO_CONFIG: 'joyful_tango_config_v1',
+  GOOGLE_PLAY_CONFIG: 'joyful_google_play_config_v1',
+  ADMOB_CREDS: 'joyful_admob_credentials_v1',
+  ADMOB_SETTINGS: 'joyful_admob_settings_v1',
+  ENGAGEMENT_ANALYTICS: 'joyful_engagement_analytics_v1',
+  AD_EVENT_METRICS: 'joyful_ad_event_metrics_v1',
   TEST_TRANSACTIONS: 'joyful_test_txs_v1',
   AD_UNITS: 'joyful_ad_units_v1',
   ADMOB_STATS: 'joyful_admob_stats_v1',
@@ -49,6 +78,10 @@ const STORAGE_KEYS = {
   AUDIT_LOGS: 'joyful_audit_logs_v1',
   FINANCIALS: 'joyful_financials_v1',
   PAYOUTS: 'joyful_payouts_v1',
+  APP_CONFIG: 'joyful_app_config_v1',
+  REVIEW_CONFIG: 'joyful_review_config_v1',
+  USER_REVIEWS: 'joyful_user_reviews_v1',
+  USERS_WITH_REVIEWS: 'joyful_users_with_reviews_v1',
   PURGE_FLAG: 'joyful_test_data_purged_v2',
 };
 
@@ -90,15 +123,227 @@ function setStoredItem<T>(key: string, value: T): void {
   }
 }
 
+function generateBase32Secret(length = 32): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+function generateBackupCodesList(count = 10): BackupCode[] {
+  const codes: BackupCode[] = [];
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+  for (let i = 0; i < count; i++) {
+    const part1 = Math.floor(1000 + Math.random() * 9000).toString();
+    const part2 = Math.floor(1000 + Math.random() * 9000).toString();
+    codes.push({
+      code: `${part1}-${part2}`,
+      used: false,
+      generatedAt: now,
+    });
+  }
+  return codes;
+}
+
 export const StorageService = {
   // Authentication & Access Control
-  getAdminUser(): AdminUser {
-    return getStoredItem<AdminUser>(STORAGE_KEYS.AUTH_SESSION, INITIAL_ADMIN_USER);
+  getAdminUser(): AdminUser | null {
+    const session = AdminSessionService.getSession();
+    if (session && session.user && this.isAuthorizedAdmin(session.user.email)) {
+      return session.user;
+    }
+    return null;
+  },
+
+  isSessionValid(): boolean {
+    return AdminSessionService.isSessionValid();
   },
 
   isAuthorizedAdmin(email: string): boolean {
     if (!email) return false;
     return email.trim().toLowerCase() === 'admin@7tasker.com';
+  },
+
+  // 2FA Security & Cryptographic Config
+  getTwoFactorConfig(): TwoFactorSecurityConfig {
+    return getStoredItem<TwoFactorSecurityConfig>(STORAGE_KEYS.TWO_FACTOR_CONFIG, INITIAL_TWO_FACTOR_CONFIG);
+  },
+
+  updateTwoFactorConfig(config: TwoFactorSecurityConfig): void {
+    setStoredItem(STORAGE_KEYS.TWO_FACTOR_CONFIG, config);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: '2FA_SECURITY_POLICY_UPDATED',
+      module: 'Security',
+      severity: 'warning',
+      details: `2FA policy modified: Status=${config.enabled ? 'ENABLED' : 'DISABLED'}, Preferred=${config.preferredMethod}, IP Binding=${config.enforceIpBinding ? 'ON' : 'OFF'}`,
+    });
+  },
+
+  generateNewSecret(): TwoFactorSecurityConfig {
+    const current = this.getTwoFactorConfig();
+    const newSecret = generateBase32Secret(32);
+    const newUrl = `otpauth://totp/JoyfulDays%20Admin:${encodeURIComponent(current.accountEmail)}?secret=${newSecret}&issuer=JoyfulDays&algorithm=SHA1&digits=6&period=30`;
+    
+    const updated: TwoFactorSecurityConfig = {
+      ...current,
+      secretKey: newSecret,
+      otpAuthUrl: newUrl,
+      lastConfigured: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+    };
+    
+    setStoredItem(STORAGE_KEYS.TWO_FACTOR_CONFIG, updated);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: '2FA_SECRET_KEY_REGENERATED',
+      module: 'Security',
+      severity: 'critical',
+      details: `New RFC 6238 TOTP seed secret generated for root administrator authenticator apps.`,
+    });
+    return updated;
+  },
+
+  regenerateBackupCodes(): BackupCode[] {
+    const current = this.getTwoFactorConfig();
+    const newCodes = generateBackupCodesList(10);
+    const updated: TwoFactorSecurityConfig = {
+      ...current,
+      backupCodes: newCodes,
+      lastConfigured: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+    };
+    setStoredItem(STORAGE_KEYS.TWO_FACTOR_CONFIG, updated);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: '2FA_BACKUP_CODES_REGENERATED',
+      module: 'Security',
+      severity: 'warning',
+      details: `Generated a fresh set of 10 emergency one-time 2FA recovery backup codes. Prior codes invalidated.`,
+    });
+    return newCodes;
+  },
+
+  updateHardwareSecurityPin(newPin: string): void {
+    const current = this.getTwoFactorConfig();
+    const updated: TwoFactorSecurityConfig = {
+      ...current,
+      hardwareSecurityPin: newPin,
+    };
+    setStoredItem(STORAGE_KEYS.TWO_FACTOR_CONFIG, updated);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: '2FA_HARDWARE_PIN_UPDATED',
+      module: 'Security',
+      severity: 'critical',
+      details: 'Super administrator updated the 6-digit hardware fallback PIN.',
+    });
+  },
+
+  // Get live TOTP token from current secret (RFC 6238)
+  getCurrentTotpToken(): string | null {
+    try {
+      const config = this.getTwoFactorConfig();
+      if (!config.secretKey) return null;
+      const totp = new OTPAuth.TOTP({
+        issuer: config.issuer || 'JoyfulDays',
+        label: config.accountEmail,
+        algorithm: 'SHA1',
+        digits: 6,
+        period: 30,
+        secret: OTPAuth.Secret.fromBase32(config.secretKey.replace(/\s+/g, '')),
+      });
+      return totp.generate();
+    } catch {
+      return null;
+    }
+  },
+
+  verifyAndConsumeTwoFactorCode(input: string): { success: boolean; method: 'totp' | 'pin' | 'backup_code'; message?: string } {
+    const clean = input.trim().replace(/\s+/g, '');
+    const config = this.getTwoFactorConfig();
+
+    if (!clean) {
+      return {
+        success: false,
+        method: 'totp',
+        message: 'Please enter a 6-digit Authenticator code, Security PIN, or an 8-digit Backup code.',
+      };
+    }
+
+    // 1. Check Hardware Security PIN (if configured)
+    if (config.hardwareSecurityPin && clean === config.hardwareSecurityPin) {
+      return { success: true, method: 'pin', message: 'Hardware Security PIN verified.' };
+    }
+
+    // 2. Check Emergency Backup Codes (format: 1234-5678 or 12345678)
+    const normalizedInput = clean.includes('-') ? clean : (clean.length === 8 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean);
+    const matchingIndex = config.backupCodes.findIndex((b) => b.code.toLowerCase() === normalizedInput.toLowerCase());
+
+    if (matchingIndex !== -1) {
+      const targetCode = config.backupCodes[matchingIndex];
+      if (targetCode.used) {
+        return {
+          success: false,
+          method: 'backup_code',
+          message: `Backup code "${targetCode.code}" has already been used on ${targetCode.usedAt || 'previous login'}. One-time recovery codes cannot be reused.`,
+        };
+      }
+
+      // Mark as used
+      const updatedCodes = [...config.backupCodes];
+      const now = new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+      updatedCodes[matchingIndex] = {
+        ...targetCode,
+        used: true,
+        usedAt: now,
+      };
+
+      const updatedConfig = { ...config, backupCodes: updatedCodes };
+      setStoredItem(STORAGE_KEYS.TWO_FACTOR_CONFIG, updatedConfig);
+
+      this.addAuditLog({
+        actor: 'admin@7tasker.com',
+        action: '2FA_BACKUP_CODE_CONSUMED',
+        module: 'Security',
+        severity: 'warning',
+        details: `One-time emergency backup code ${targetCode.code} was successfully consumed for administrative authentication. Remaining unused codes: ${updatedCodes.filter(c => !c.used).length}.`,
+      });
+
+      return {
+        success: true,
+        method: 'backup_code',
+        message: `One-time backup recovery code verified. ${updatedCodes.filter(c => !c.used).length} backup codes remaining.`,
+      };
+    }
+
+    // 3. Cryptographic RFC 6238 TOTP Validation (Google Authenticator / Authy / 1Password)
+    if (/^\d{6}$/.test(clean) && config.secretKey) {
+      try {
+        const totp = new OTPAuth.TOTP({
+          issuer: config.issuer || 'JoyfulDays',
+          label: config.accountEmail,
+          algorithm: 'SHA1',
+          digits: 6,
+          period: 30,
+          secret: OTPAuth.Secret.fromBase32(config.secretKey.replace(/\s+/g, '')),
+        });
+
+        // Window: 1 allows current 30s period and +/- 1 period (30s) for time sync tolerance
+        const delta = totp.validate({ token: clean, window: 1 });
+        if (delta !== null) {
+          return { success: true, method: 'totp', message: 'Authenticator App TOTP token verified.' };
+        }
+      } catch (err) {
+        console.error('TOTP validation error:', err);
+      }
+    }
+
+    return {
+      success: false,
+      method: 'totp',
+      message: 'Invalid 2FA code. Please enter the current 6-digit code from your Authenticator app, your Security PIN, or an unused 8-digit Backup code.',
+    };
   },
 
   // Gateway Routing Mode & Fallback
@@ -283,7 +528,109 @@ export const StorageService = {
     return newTx;
   },
 
-  // AdMob Monetization
+  // Google Play Developer API & In-App Review Config
+  getGooglePlayConfig(): GooglePlayConfig {
+    return getStoredItem<GooglePlayConfig>(STORAGE_KEYS.GOOGLE_PLAY_CONFIG, INITIAL_GOOGLE_PLAY_CONFIG);
+  },
+
+  updateGooglePlayConfig(config: GooglePlayConfig): void {
+    setStoredItem(STORAGE_KEYS.GOOGLE_PLAY_CONFIG, config);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'GOOGLE_PLAY_CONFIG_UPDATED',
+      module: 'API Keys',
+      severity: 'warning',
+      details: `Google Play API configuration updated for package: ${config.packageName}. In-App Reviews: ${config.inAppReviewApiEnabled ? 'ACTIVE' : 'DISABLED'}, Env: ${config.environment.toUpperCase()}`,
+    });
+  },
+
+  toggleGooglePlayStatus(enabled: boolean): GooglePlayConfig {
+    const current = this.getGooglePlayConfig();
+    const updated = { ...current, enabled };
+    setStoredItem(STORAGE_KEYS.GOOGLE_PLAY_CONFIG, updated);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: enabled ? 'GOOGLE_PLAY_API_ENABLED' : 'GOOGLE_PLAY_API_DISABLED',
+      module: 'API Keys',
+      severity: enabled ? 'info' : 'warning',
+      details: `Google Play Developer API integration was ${enabled ? 'ENABLED' : 'DISABLED'}.`,
+    });
+    return updated;
+  },
+
+  // Master AdMob Control & Remote Config Architecture (settings/admob)
+  getAdMobSettings(): AdMobSettingsConfig {
+    return getStoredItem<AdMobSettingsConfig>(STORAGE_KEYS.ADMOB_SETTINGS, INITIAL_ADMOB_SETTINGS);
+  },
+
+  updateAdMobSettings(settings: Partial<AdMobSettingsConfig>, actorEmail: string = 'Admin@7tasker.com'): {
+    previous: AdMobSettingsConfig;
+    current: AdMobSettingsConfig;
+    changedFields: string[];
+  } {
+    const prev = this.getAdMobSettings();
+    const next: AdMobSettingsConfig = {
+      ...prev,
+      ...settings,
+      // Sensible validations
+      interstitialFrequency: Math.max(1, Math.min(50, Number(settings.interstitialFrequency ?? prev.interstitialFrequency))),
+      minActionsBeforeFirstAd: Math.max(1, Math.min(30, Number(settings.minActionsBeforeFirstAd ?? prev.minActionsBeforeFirstAd))),
+      minimumSessionTimeSeconds: Math.max(10, Math.min(1800, Number(settings.minimumSessionTimeSeconds ?? prev.minimumSessionTimeSeconds))),
+      cooldownMinutes: Math.max(1, Math.min(120, Number(settings.cooldownMinutes ?? prev.cooldownMinutes))),
+      maxInterstitialsPerSession: Math.max(1, Math.min(10, Number(settings.maxInterstitialsPerSession ?? prev.maxInterstitialsPerSession))),
+      updatedAt: new Date().toISOString(),
+      updatedBy: actorEmail,
+    };
+    setStoredItem(STORAGE_KEYS.ADMOB_SETTINGS, next);
+
+    // Compute diff for audit log
+    const changedFields: string[] = [];
+    const diffs: string[] = [];
+    (Object.keys(next) as (keyof AdMobSettingsConfig)[]).forEach((key) => {
+      if (prev[key] !== next[key]) {
+        changedFields.push(key);
+        diffs.push(`${key}: "${prev[key]}" ➔ "${next[key]}"`);
+      }
+    });
+
+    if (changedFields.length > 0) {
+      const isActivation = (!prev.adsEnabled && next.adsEnabled) || (!prev.bannerEnabled && next.bannerEnabled) || (!prev.interstitialEnabled && next.interstitialEnabled);
+      this.addAuditLog({
+        actor: actorEmail,
+        action: isActivation ? 'ADMOB_ADS_ACTIVATED' : 'ADMOB_CONFIG_UPDATED',
+        module: 'AdMob',
+        severity: isActivation ? 'warning' : 'info',
+        details: `AdMob remote configuration modified. Changed fields [${changedFields.join(', ')}]. Diffs: ${diffs.join('; ')}`,
+      });
+    }
+
+    return { previous: prev, current: next, changedFields };
+  },
+
+  getEngagementAnalytics(): AppEngagementAnalytics {
+    return getStoredItem<AppEngagementAnalytics>(STORAGE_KEYS.ENGAGEMENT_ANALYTICS, INITIAL_ENGAGEMENT_ANALYTICS);
+  },
+
+  getAdEventMetrics(): AdEventMetrics {
+    return getStoredItem<AdEventMetrics>(STORAGE_KEYS.AD_EVENT_METRICS, INITIAL_AD_EVENT_METRICS);
+  },
+
+  // AdMob Monetization & Credentials
+  getAdMobCredentials(): AdMobCredentials {
+    return getStoredItem<AdMobCredentials>(STORAGE_KEYS.ADMOB_CREDS, INITIAL_ADMOB_CREDENTIALS);
+  },
+
+  updateAdMobCredentials(creds: AdMobCredentials): void {
+    setStoredItem(STORAGE_KEYS.ADMOB_CREDS, creds);
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'ADMOB_CREDENTIALS_UPDATED',
+      module: 'AdMob',
+      severity: 'warning',
+      details: `AdMob credentials updated. App ID: ${creds.appId}, Publisher: ${creds.publisherId}, Mode: ${creds.environment.toUpperCase()}`,
+    });
+  },
+
   getAdUnits(): AdUnitConfig[] {
     return getStoredItem<AdUnitConfig[]>(STORAGE_KEYS.AD_UNITS, INITIAL_AD_UNITS);
   },
@@ -436,6 +783,301 @@ export const StorageService = {
       severity: 'info',
       details: `Settled celebration host payout ${payoutId} with direct platform commission deduction.`,
     });
+  },
+
+  // App & Mobile Gifting Feature Flag Configuration
+  getAppFeatureConfig(): AppFeatureConfig {
+    return getStoredItem<AppFeatureConfig>(STORAGE_KEYS.APP_CONFIG, INITIAL_APP_FEATURE_CONFIG);
+  },
+
+  // Authoritative mirror: updates localStorage from Firestore without creating redundant audit log entries
+  updateAppFeatureConfigFromFirestore(remote: Partial<AppFeatureConfig>): AppFeatureConfig {
+    const current = this.getAppFeatureConfig();
+    const updated: AppFeatureConfig = {
+      ...current,
+      ...remote,
+      isGiftingEnabled: typeof remote.isGiftingEnabled === 'boolean' ? remote.isGiftingEnabled : current.isGiftingEnabled,
+      isPoolingEnabled: typeof remote.isPoolingEnabled === 'boolean' ? remote.isPoolingEnabled : current.isPoolingEnabled,
+      isTangoCardDirectGiftEnabled: typeof remote.isTangoCardDirectGiftEnabled === 'boolean' ? remote.isTangoCardDirectGiftEnabled : current.isTangoCardDirectGiftEnabled,
+      lastUpdated: remote.lastUpdated || current.lastUpdated,
+      updatedBy: remote.updatedBy || current.updatedBy,
+    };
+    setStoredItem(STORAGE_KEYS.APP_CONFIG, updated);
+    return updated;
+  },
+
+  saveAppFeatureConfig(updates: Partial<AppFeatureConfig>): AppFeatureConfig {
+    const current = this.getAppFeatureConfig();
+    const updated: AppFeatureConfig = {
+      ...current,
+      ...updates,
+      lastUpdated: new Date().toISOString(),
+      updatedBy: 'Admin@7tasker.com',
+    };
+    setStoredItem(STORAGE_KEYS.APP_CONFIG, updated);
+
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'APP_CONFIG_UPDATED',
+      module: 'Financials',
+      severity: 'info',
+      details: `Updated mobile app configuration. isGiftingEnabled=${updated.isGiftingEnabled}, isPoolingEnabled=${updated.isPoolingEnabled}`,
+    });
+
+    return updated;
+  },
+
+  toggleGiftingEnabled(enabled?: boolean): AppFeatureConfig {
+    const current = this.getAppFeatureConfig();
+    const targetState = enabled !== undefined ? enabled : !current.isGiftingEnabled;
+    return this.saveAppFeatureConfig({ isGiftingEnabled: targetState });
+  },
+
+  // ================= Module 6: Review Reminders & In-App Play Review Monitor =================
+  getReviewReminderConfig(): ReviewReminderConfig {
+    return getStoredItem<ReviewReminderConfig>(STORAGE_KEYS.REVIEW_CONFIG, INITIAL_REVIEW_REMINDER_CONFIG);
+  },
+
+  saveReviewReminderConfig(updates: Partial<ReviewReminderConfig>): ReviewReminderConfig {
+    const current = this.getReviewReminderConfig();
+    const updated: ReviewReminderConfig = {
+      ...current,
+      ...updates,
+      triggerModes: {
+        ...current.triggerModes,
+        ...(updates.triggerModes || {}),
+      },
+      pushNotificationTemplate: {
+        ...current.pushNotificationTemplate,
+        ...(updates.pushNotificationTemplate || {}),
+      },
+      inAppPopupTemplate: {
+        ...current.inAppPopupTemplate,
+        ...(updates.inAppPopupTemplate || {}),
+      },
+      quietHours: {
+        ...current.quietHours,
+        ...(updates.quietHours || {}),
+      },
+      lastUpdated: new Date().toISOString(),
+      updatedBy: 'Admin@7tasker.com',
+    };
+    setStoredItem(STORAGE_KEYS.REVIEW_CONFIG, updated);
+
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'REVIEW_REMINDER_CONFIG_UPDATED',
+      module: 'Reviews',
+      severity: 'info',
+      details: `Updated review reminder rules: isEnabled=${updated.isEnabled}, delay=${updated.initialDelayHours}h, retry=${updated.retryIntervalHours}h, maxAttempts=${updated.maxReminderAttempts}`,
+    });
+
+    return updated;
+  },
+
+  getUserReviews(): UserReview[] {
+    return getStoredItem<UserReview[]>(STORAGE_KEYS.USER_REVIEWS, INITIAL_USER_REVIEWS);
+  },
+
+  saveUserReview(review: UserReview): UserReview {
+    const reviews = this.getUserReviews();
+    const existingIndex = reviews.findIndex((r) => r.id === review.id);
+    let updatedReviews: UserReview[];
+
+    if (existingIndex >= 0) {
+      updatedReviews = reviews.map((r, i) => (i === existingIndex ? review : r));
+    } else {
+      updatedReviews = [review, ...reviews];
+    }
+    setStoredItem(STORAGE_KEYS.USER_REVIEWS, updatedReviews);
+
+    // Also update associated user review status if present
+    const users = this.getUsersWithReviewDetails();
+    const userIndex = users.findIndex((u) => u.id === review.userId || u.email.toLowerCase() === review.userEmail.toLowerCase());
+    if (userIndex >= 0) {
+      const updatedUser = {
+        ...users[userIndex],
+        reviewStatus: 'reviewed' as const,
+        review: review,
+        isEligibleForReminder: false,
+        forcePopupPending: false,
+      };
+      users[userIndex] = updatedUser;
+      setStoredItem(STORAGE_KEYS.USERS_WITH_REVIEWS, users);
+    }
+
+    this.addAuditLog({
+      actor: review.userEmail,
+      action: 'USER_REVIEW_RECORDED',
+      module: 'Reviews',
+      severity: 'info',
+      details: `Recorded ${review.rating}-star review from ${review.userName} (${review.source}).`,
+    });
+
+    return review;
+  },
+
+  getUsersWithReviewDetails(): UserWithReviewDetails[] {
+    const stored = getStoredItem<UserWithReviewDetails[]>(STORAGE_KEYS.USERS_WITH_REVIEWS, INITIAL_USERS_WITH_REVIEWS);
+    const config = this.getReviewReminderConfig();
+
+    // Recompute real-time eligibility based on current config & time elapsed
+    return stored.map((user) => {
+      const signInTime = new Date(user.signInTimestamp).getTime();
+      const now = Date.now();
+      const hoursSince = Math.max(0, Math.round(((now - signInTime) / (1000 * 60 * 60)) * 10) / 10);
+      
+      const isUnreviewed = user.reviewStatus !== 'reviewed';
+      const exceededInitialDelay = hoursSince >= config.initialDelayHours;
+      const underMaxAttempts = user.reminderCount < config.maxReminderAttempts;
+      
+      let isEligible = false;
+      let nextScheduled = user.nextScheduledReminder;
+
+      if (!config.isEnabled) {
+        isEligible = false;
+        nextScheduled = 'Engine Paused';
+      } else if (user.reviewStatus === 'reviewed') {
+        isEligible = false;
+        nextScheduled = 'Completed ★';
+      } else if (user.reminderCount >= config.maxReminderAttempts) {
+        isEligible = false;
+        nextScheduled = `Max Attempts Reached (${user.reminderCount}/${config.maxReminderAttempts})`;
+      } else if (!exceededInitialDelay) {
+        isEligible = false;
+        const remaining = (config.initialDelayHours - hoursSince).toFixed(1);
+        nextScheduled = `Grace period (${remaining}h remaining)`;
+      } else if (user.lastRemindedAt) {
+        const lastRemindedTime = new Date(user.lastRemindedAt).getTime();
+        const hoursSinceLastReminder = (now - lastRemindedTime) / (1000 * 60 * 60);
+        if (hoursSinceLastReminder >= config.retryIntervalHours) {
+          isEligible = true;
+          nextScheduled = 'Eligible for Retry';
+        } else {
+          isEligible = false;
+          const retryRemaining = (config.retryIntervalHours - hoursSinceLastReminder).toFixed(1);
+          nextScheduled = `In Cooldown (${retryRemaining}h left)`;
+        }
+      } else {
+        isEligible = true;
+        nextScheduled = `Overdue (Eligible now, +${(hoursSince - config.initialDelayHours).toFixed(1)}h)`;
+      }
+
+      return {
+        ...user,
+        hoursSinceSignIn: hoursSince,
+        isEligibleForReminder: isEligible || user.forcePopupPending,
+        nextScheduledReminder: nextScheduled,
+      };
+    });
+  },
+
+  saveUsersWithReviewDetails(users: UserWithReviewDetails[]): void {
+    setStoredItem(STORAGE_KEYS.USERS_WITH_REVIEWS, users);
+  },
+
+  triggerInAppReviewPopup(userId: string): { success: boolean; message: string; user?: UserWithReviewDetails } {
+    const users = this.getUsersWithReviewDetails();
+    const index = users.findIndex((u) => u.id === userId);
+    if (index === -1) {
+      return { success: false, message: `User ${userId} not found.` };
+    }
+
+    const targetUser = users[index];
+    const updatedUser: UserWithReviewDetails = {
+      ...targetUser,
+      reminderCount: targetUser.reminderCount + 1,
+      lastRemindedAt: new Date().toISOString(),
+      forcePopupPending: true,
+      reviewStatus: targetUser.reviewStatus === 'reviewed' ? 'reviewed' : 'reminded',
+    };
+
+    users[index] = updatedUser;
+    this.saveUsersWithReviewDetails(users);
+
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'IN_APP_REVIEW_POPUP_DISPATCHED',
+      module: 'Reviews',
+      severity: 'info',
+      details: `Dispatched Google Play In-App Review bottom-sheet pop-up trigger to device ${targetUser.deviceInfo.model} for ${targetUser.email}.`,
+    });
+
+    return {
+      success: true,
+      message: `In-App Google Play Review pop-up trigger sent to ${targetUser.name}'s device (${targetUser.deviceInfo.model}).`,
+      user: updatedUser,
+    };
+  },
+
+  triggerPushNotification(userId: string): { success: boolean; message: string; user?: UserWithReviewDetails } {
+    const users = this.getUsersWithReviewDetails();
+    const index = users.findIndex((u) => u.id === userId);
+    if (index === -1) {
+      return { success: false, message: `User ${userId} not found.` };
+    }
+
+    const targetUser = users[index];
+    const config = this.getReviewReminderConfig();
+    const updatedUser: UserWithReviewDetails = {
+      ...targetUser,
+      reminderCount: targetUser.reminderCount + 1,
+      lastRemindedAt: new Date().toISOString(),
+      reviewStatus: targetUser.reviewStatus === 'reviewed' ? 'reviewed' : 'reminded',
+    };
+
+    users[index] = updatedUser;
+    this.saveUsersWithReviewDetails(users);
+
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'REVIEW_PUSH_NOTIFICATION_SENT',
+      module: 'Reviews',
+      severity: 'info',
+      details: `Sent review reminder push notification ("${config.pushNotificationTemplate.title}") to FCM token ${targetUser.deviceInfo.fcmTokenPrefix} on ${targetUser.deviceInfo.model}.`,
+    });
+
+    return {
+      success: true,
+      message: `Push notification dispatched to ${targetUser.name} via FCM token (${targetUser.deviceInfo.fcmTokenPrefix}).`,
+      user: updatedUser,
+    };
+  },
+
+  batchTriggerReviewReminders(): { processed: number; remindedCount: number; userNames: string[] } {
+    const users = this.getUsersWithReviewDetails();
+    const config = this.getReviewReminderConfig();
+    const remindedUsers: string[] = [];
+
+    const updatedUsers = users.map((u) => {
+      if (u.isEligibleForReminder && u.reviewStatus !== 'reviewed') {
+        remindedUsers.push(u.name);
+        return {
+          ...u,
+          reminderCount: u.reminderCount + 1,
+          lastRemindedAt: new Date().toISOString(),
+          forcePopupPending: config.triggerModes.inAppPopup,
+          reviewStatus: 'reminded' as const,
+        };
+      }
+      return u;
+    });
+
+    this.saveUsersWithReviewDetails(updatedUsers);
+
+    this.addAuditLog({
+      actor: 'admin@7tasker.com',
+      action: 'BATCH_REVIEW_REMINDERS_EXECUTED',
+      module: 'Reviews',
+      severity: 'info',
+      details: `Batch review monitoring engine prompted ${remindedUsers.length} eligible unreviewed users.`,
+    });
+
+    return {
+      processed: users.length,
+      remindedCount: remindedUsers.length,
+      userNames: remindedUsers,
+    };
   },
 
   resetToDefaults(): void {

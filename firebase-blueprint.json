@@ -1,0 +1,158 @@
+{
+  "entities": {
+    "GiftingSettings": {
+      "title": "Gifting Settings",
+      "description": "Master switch and mobile feature flags for Android APK gifting",
+      "type": "object",
+      "properties": {
+        "isGiftingEnabled": {
+          "type": "boolean",
+          "description": "Whether gifting is active in the mobile APK"
+        },
+        "isPoolingEnabled": {
+          "type": "boolean",
+          "description": "Whether gift pooling is enabled"
+        },
+        "isTangoCardDirectGiftEnabled": {
+          "type": "boolean",
+          "description": "Whether direct eGift card issuance is enabled"
+        },
+        "minimumContributionAmount": {
+          "type": "number",
+          "description": "Minimum pool contribution in USD"
+        },
+        "systemStatus": {
+          "type": "string",
+          "description": "System status string (ACTIVE or PAUSED)"
+        },
+        "lastUpdated": {
+          "type": "string",
+          "description": "ISO timestamp of the update"
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "Admin email who updated the settings"
+        }
+      },
+      "required": ["isGiftingEnabled"]
+    },
+    "AdMobSettings": {
+      "title": "AdMob Settings",
+      "description": "Master switch, placement, frequency, and remote controls for mobile AdMob ads",
+      "type": "object",
+      "properties": {
+        "adsEnabled": {
+          "type": "boolean",
+          "description": "Master advertising toggle - must be false by default"
+        },
+        "bannerEnabled": {
+          "type": "boolean",
+          "description": "Whether banner ads are enabled"
+        },
+        "interstitialEnabled": {
+          "type": "boolean",
+          "description": "Whether interstitial ads are enabled"
+        },
+        "bannerAdUnitId": {
+          "type": "string",
+          "description": "Production or test Banner Ad Unit ID"
+        },
+        "interstitialAdUnitId": {
+          "type": "string",
+          "description": "Production or test Interstitial Ad Unit ID"
+        },
+        "bannerPlacement": {
+          "type": "string",
+          "description": "Placement of the banner (BOTTOM or TOP)"
+        },
+        "interstitialTrigger": {
+          "type": "string",
+          "description": "Natural trigger moment for interstitial ads"
+        },
+        "interstitialFrequency": {
+          "type": "number",
+          "description": "Actions between interstitial opportunities"
+        },
+        "minActionsBeforeFirstAd": {
+          "type": "number",
+          "description": "Minimum actions required before first ad eligibility"
+        },
+        "minimumSessionTimeSeconds": {
+          "type": "number",
+          "description": "Minimum user session duration in seconds before first ad"
+        },
+        "cooldownMinutes": {
+          "type": "number",
+          "description": "Cooldown period in minutes between consecutive interstitials"
+        },
+        "maxInterstitialsPerSession": {
+          "type": "number",
+          "description": "Maximum interstitial ads permitted in a single session"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of the configuration update"
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "Admin UID or email who saved the configuration"
+        }
+      },
+      "required": ["adsEnabled", "bannerEnabled", "interstitialEnabled"]
+    },
+    "Celebration": {
+      "title": "Celebration Event",
+      "description": "Celebration event record from Android app or Admin Console",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Event title or summary"
+        },
+        "type": {
+          "type": "string",
+          "description": "Celebration category"
+        },
+        "hostName": {
+          "type": "string",
+          "description": "Host display name"
+        },
+        "hostEmail": {
+          "type": "string",
+          "description": "Host email address"
+        },
+        "eventDate": {
+          "type": "string",
+          "description": "Date of celebration"
+        },
+        "rsvpCount": {
+          "type": "number",
+          "description": "Number of RSVPs"
+        },
+        "giftPoolTarget": {
+          "type": "number",
+          "description": "Target pool dollar amount"
+        },
+        "giftPoolRaised": {
+          "type": "number",
+          "description": "Current raised amount"
+        },
+        "status": {
+          "type": "string",
+          "description": "Event status"
+        }
+      },
+      "required": ["title", "hostName"]
+    }
+  },
+  "firestore": {
+    "/settings/{settingId}": {
+      "schema": "GiftingSettings",
+      "description": "Configuration documents including /settings/gifting"
+    },
+    "/celebrations/{celebrationId}": {
+      "schema": "Celebration",
+      "description": "Collection of user celebrations and gift pools"
+    }
+  }
+}

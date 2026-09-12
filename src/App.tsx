@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AdminUser, ActiveModule, DatabaseBackup } from './types';
 import { StorageService } from './services/storageService';
+import { AdminSessionService } from './services/adminSessionService';
 import { AdminAuthGate } from './components/auth/AdminAuthGate';
 import { Navbar } from './components/layout/Navbar';
 import { Sidebar } from './components/layout/Sidebar';
@@ -10,20 +11,46 @@ import { AdMobModule } from './components/modules/AdMobModule';
 import { CelebrationsModule } from './components/modules/CelebrationsModule';
 import { BackupsModule } from './components/modules/BackupsModule';
 import { FinancialsModule } from './components/modules/FinancialsModule';
+import { UserReviewsModule } from './components/modules/UserReviewsModule';
 import { BackupTriggerModal } from './components/modals/BackupTriggerModal';
 import { GlobalSearchModal } from './components/modals/GlobalSearchModal';
 
 export default function App() {
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState<string | null>(null);
+
   const [currentUser, setCurrentUser] = useState<AdminUser | null>(() => {
-    // Automatically load root admin session if valid
+    // Only load admin user if an active, non-expired session exists
+    if (!StorageService.isSessionValid()) return null;
     const user = StorageService.getAdminUser();
-    return StorageService.isAuthorizedAdmin(user.email) ? user : null;
+    return user && StorageService.isAuthorizedAdmin(user.email) ? user : null;
   });
 
   const [activeModule, setActiveModule] = useState<ActiveModule>('overview');
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
   const [globalBannerMsg, setGlobalBannerMsg] = useState<string | null>(null);
+
+  // Monitor session expiration events from all services & API interceptors
+  useEffect(() => {
+    const unsub = AdminSessionService.onSessionExpired((msg) => {
+      setSessionExpiredNotice(msg);
+      setCurrentUser(null);
+    });
+    return () => unsub();
+  }, []);
+
+  // Periodic heartbeat: enforce expiration if token passes TTL while browser tab remains open
+  useEffect(() => {
+    if (!currentUser) return;
+    const interval = setInterval(() => {
+      if (!AdminSessionService.isSessionValid()) {
+        AdminSessionService.clearSession();
+        setSessionExpiredNotice('Your admin session has expired. Please sign in again.');
+        setCurrentUser(null);
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [currentUser]);
 
   // Global ⌘K keyboard shortcut
   useEffect(() => {
@@ -38,6 +65,7 @@ export default function App() {
   }, []);
 
   const handleAuthenticated = (user: AdminUser) => {
+    setSessionExpiredNotice(null);
     setCurrentUser(user);
     setActiveModule('overview');
   };
@@ -50,6 +78,7 @@ export default function App() {
       severity: 'info',
       details: 'Super administrator manually terminated session.',
     });
+    AdminSessionService.clearSession();
     setCurrentUser(null);
   };
 
@@ -61,6 +90,7 @@ export default function App() {
       severity: 'info',
       details: 'Session locked by admin for zero-trust re-authentication.',
     });
+    AdminSessionService.clearSession();
     setCurrentUser(null);
   };
 
@@ -70,7 +100,11 @@ export default function App() {
   };
 
   return (
-    <AdminAuthGate currentUser={currentUser} onAuthenticated={handleAuthenticated}>
+    <AdminAuthGate
+      currentUser={currentUser}
+      sessionExpiredNotice={sessionExpiredNotice}
+      onAuthenticated={handleAuthenticated}
+    >
       {currentUser && (
         <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white">
           {/* Global System Navbar */}
@@ -126,6 +160,8 @@ export default function App() {
               {activeModule === 'backups' && <BackupsModule />}
 
               {activeModule === 'financials' && <FinancialsModule />}
+
+              {activeModule === 'reviews' && <UserReviewsModule />}
             </main>
           </div>
 

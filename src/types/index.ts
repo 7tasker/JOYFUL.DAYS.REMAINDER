@@ -9,13 +9,136 @@ export type AdminUser = {
   securityLevel: 'Tier-1 Root SuperAdmin' | 'Read-Only' | 'Restricted';
 };
 
+export type BackupCode = {
+  code: string;
+  used: boolean;
+  usedAt?: string;
+  generatedAt: string;
+};
+
+export type TwoFactorSecurityConfig = {
+  enabled: boolean;
+  requiredForLogin: boolean;
+  secretKey: string;
+  otpAuthUrl: string;
+  accountEmail: string;
+  issuer: string;
+  backupCodes: BackupCode[];
+  hardwareSecurityPin: string;
+  lastConfigured: string;
+  preferredMethod: 'authenticator_app' | 'security_pin' | 'backup_code';
+  enforceIpBinding: boolean;
+  sessionTimeoutMinutes: number;
+};
+
+// Global App & Mobile Feature Flags
+export type AppFeatureConfig = {
+  isGiftingEnabled: boolean; // Master toggle to show/hide "Send or Pool Gift" button in Android APK
+  isPoolingEnabled: boolean; // Sub-toggle for group celebration fund pooling
+  isTangoCardDirectGiftEnabled: boolean; // Sub-toggle for instant eGift delivery
+  minimumContributionAmount: number; // Minimum pool contribution ($)
+  maintenanceMessage?: string; // Optional message shown when gifting is disabled
+  bannerNoticeMessage?: string;
+  systemStatus?: 'ACTIVE' | 'PAUSED' | string;
+  lastUpdated: string;
+  updatedBy: string;
+  apiVersion: string;
+};
+
+
 export type ActiveModule = 
   | 'overview'
   | 'gateways'
   | 'admob'
   | 'celebrations'
   | 'backups'
-  | 'financials';
+  | 'financials'
+  | 'reviews';
+
+// Module 6: User Reviews, In-App Feedback & Automated Reminder Engine
+export type ReviewReminderConfig = {
+  isEnabled: boolean; // Master toggle for active review monitoring system
+  initialDelayHours: number; // Hours after initial signin before triggering review popup/push (e.g. 2, 4, 12, 24)
+  retryIntervalHours: number; // Interval between subsequent reminders if unreviewed
+  maxReminderAttempts: number; // Maximum times to prompt an unreviewed user (e.g. 3)
+  triggerModes: {
+    inAppPopup: boolean; // In-app bottom sheet / Google Play Review dialog
+    pushNotification: boolean; // FCM / APNs push alert
+    afterCelebrationCreated: boolean; // Prompt immediately after creating an event
+    afterGiftSent: boolean; // Prompt after sending or pooling a gift
+  };
+  pushNotificationTemplate: {
+    title: string;
+    body: string;
+    actionText: string;
+    deepLink: string;
+  };
+  inAppPopupTemplate: {
+    headline: string;
+    subheadline: string;
+    positiveButtonText: string;
+    dismissButtonText: string;
+    fallbackPlayStoreUrl: string;
+  };
+  quietHours: {
+    enabled: boolean;
+    startHour: number; // e.g. 22 (10 PM)
+    endHour: number; // e.g. 8 (8 AM)
+  };
+  lastUpdated: string;
+  updatedBy: string;
+};
+
+export type UserReview = {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  rating: number; // 1 to 5 stars
+  title?: string;
+  comment: string;
+  source: 'google_play_in_app' | 'google_play_direct' | 'app_store' | 'in_app_feedback_form';
+  sentiment: 'positive' | 'neutral' | 'negative';
+  deviceModel: string;
+  osVersion: string;
+  appVersion: string;
+  createdAt: string;
+  isPublic: boolean;
+  adminResponse?: string;
+  respondedAt?: string;
+};
+
+export type UserWithReviewDetails = {
+  id: string;
+  name: string;
+  email: string;
+  avatar: string;
+  status: 'active' | 'vip' | 'verified' | 'flagged' | 'suspended';
+  // Auth & Session Details
+  authTokenPrefix: string; // e.g. "Bearer eyJhbGciOi..."
+  authProvider: 'google.com' | 'password' | 'phone' | 'apple.com';
+  signInTimestamp: string; // ISO date of last sign-in
+  hoursSinceSignIn: number; // Dynamically computed or stored
+  // Device & Client Telemetry
+  deviceInfo: {
+    model: string; // e.g. "Google Pixel 8 Pro", "Samsung Galaxy S24"
+    manufacturer: string; // "Google", "Samsung", "OnePlus"
+    osVersion: string; // "Android 14 (API 34)"
+    appVersion: string; // "1.2.0 (Build 42)"
+    fcmTokenPrefix: string; // "fcm_d83nK9...x7"
+    ipAddress: string;
+    locale: string;
+  };
+  // Review Status & History
+  reviewStatus: 'reviewed' | 'pending_review' | 'reminded' | 'dismissed';
+  review?: UserReview;
+  reminderCount: number;
+  lastRemindedAt?: string;
+  nextScheduledReminder?: string;
+  isEligibleForReminder: boolean;
+  forcePopupPending: boolean; // Flag if admin manually queued a pop-up
+};
+
 
 // Module 1: API Keys & Payment Gateways
 export type GatewayProvider = 'stripe' | 'paypal';
@@ -66,6 +189,19 @@ export type GatewayRoutingConfig = {
   defaultCurrency: string;
 };
 
+export type GooglePlayConfig = {
+  enabled: boolean;
+  packageName: string;
+  serviceAccountEmail: string;
+  serviceAccountKeyJson: string;
+  inAppReviewApiEnabled: boolean;
+  playBillingEnabled: boolean;
+  sha256Certificate: string;
+  environment: 'production' | 'internal_testing' | 'closed_testing';
+  lastUpdated: string;
+  status: 'connected' | 'unconfigured' | 'error';
+};
+
 export type TangoCardBrand = {
   id: string;
   name: string;
@@ -104,6 +240,105 @@ export type TestGiftTransaction = {
   timestamp: string;
   redemptionCode: string;
   celebrationTitle: string;
+};
+
+export type AdMobCredentials = {
+  appId: string;
+  publisherId: string;
+  apiKey: string;
+  clientEmail?: string;
+  environment: 'production' | 'test';
+  bannerAdUnitId: string;
+  interstitialAdUnitId: string;
+  rewardedAdUnitId: string;
+  appOpenAdUnitId: string;
+  nativeAdUnitId: string;
+  autoSyncToFirestore: boolean;
+  lastUpdated: string;
+};
+
+// AdMob Remote Config Architecture & Master Control
+export type BannerPlacement = 'BOTTOM' | 'TOP';
+
+export type InterstitialTriggerStrategy = 
+  | 'NATURAL_BREAK'
+  | 'AFTER_N_ACTIONS'
+  | 'AFTER_EVENT_VIEW'
+  | 'AFTER_CALENDAR_NAVIGATION'
+  | 'CUSTOM';
+
+// Master Ad Control document stored at settings/admob
+export type AdMobSettingsConfig = {
+  adsEnabled: boolean; // Master Ads ON/OFF (Default: false)
+  bannerEnabled: boolean; // Banner ON/OFF (Default: false)
+  interstitialEnabled: boolean; // Interstitial ON/OFF (Default: false)
+  bannerAdUnitId: string;
+  interstitialAdUnitId: string;
+  bannerPlacement: BannerPlacement;
+  interstitialTrigger: InterstitialTriggerStrategy;
+  interstitialFrequency: number;
+  minActionsBeforeFirstAd: number;
+  minimumSessionTimeSeconds: number;
+  cooldownMinutes: number;
+  maxInterstitialsPerSession: number;
+  updatedAt: string;
+  updatedBy: string;
+};
+
+// Analytics & Ad Performance Event Reporting
+export type AppEngagementAnalytics = {
+  activeUsers: {
+    dau: number;
+    wau: number;
+    mau: number;
+  };
+  newUsers: {
+    today: number;
+    thisWeek: number;
+    thisMonth: number;
+  };
+  sessions: {
+    totalToday: number;
+    avgDurationSeconds: number;
+    sessionsWithAdsCount: number;
+    sessionsWithAdsPercent: number;
+  };
+  actions: {
+    eventCreated: number;
+    eventEdited: number;
+    eventViewed: number;
+    reminderCreated: number;
+    calendarNavigated: number;
+  };
+  retention: {
+    day1Percent: number;
+    day7Percent: number;
+    day30Percent: number;
+  };
+};
+
+export type AdEventMetrics = {
+  banner: {
+    requested: number;
+    loaded: number;
+    failed: number;
+    impressions: number;
+  };
+  interstitial: {
+    eligible: number;
+    requested: number;
+    loaded: number;
+    shown: number;
+    dismissed: number;
+    failed: number;
+  };
+  performance: {
+    loadSuccessRatePercent: number;
+    loadFailureRatePercent: number;
+    interstitialsPerSession: number;
+    avgTimeBeforeFirstAdSeconds: number;
+    postAdSessionDropoffPercent: number;
+  };
 };
 
 // Module 2: AdMob Monetization & Revenue Analytics
@@ -193,7 +428,7 @@ export type AuditLogEntry = {
   timestamp: string;
   actor: string;
   action: string;
-  module: 'Security' | 'Payment Gateway' | 'AdMob' | 'Users' | 'Backups' | 'Financials';
+  module: 'Security' | 'Payment Gateway' | 'AdMob' | 'Users' | 'Backups' | 'Financials' | 'Reviews';
   severity: 'info' | 'warning' | 'critical' | 'security_alert';
   details: string;
   ipAddress: string;

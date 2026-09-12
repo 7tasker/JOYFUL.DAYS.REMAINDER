@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   TrendingUp,
   DollarSign,
@@ -16,6 +16,9 @@ import {
   CheckCircle2,
   AlertCircle,
   Key,
+  QrCode,
+  FileText,
+  Star,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -30,6 +33,7 @@ import {
 } from 'recharts';
 import { ActiveModule } from '../../types';
 import { StorageService } from '../../services/storageService';
+import { TwoFactorSettingsModal } from '../modals/TwoFactorSettingsModal';
 
 interface OverviewDashboardProps {
   onSelectModule: (module: ActiveModule) => void;
@@ -40,6 +44,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   onSelectModule,
   onTriggerBackupModal,
 }) => {
+  const [is2FAModalOpen, setIs2FAModalOpen] = useState(false);
   const stripeConfig = StorageService.getStripeConfig();
   const tangoConfig = StorageService.getTangoConfig();
   const financialSummary = StorageService.getFinancialSummary();
@@ -47,6 +52,7 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
   const celebrations = StorageService.getCelebrations();
   const users = StorageService.getUsers();
   const backups = StorageService.getBackups();
+  const twoFactorConfig = StorageService.getTwoFactorConfig();
   const latestBackup = backups[0];
 
   const recentTransactions = StorageService.getTestTransactions().slice(0, 4);
@@ -76,6 +82,15 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
+              onClick={() => setIs2FAModalOpen(true)}
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-2 transition-colors cursor-pointer"
+              title="View 2FA QR Code, Secret Key, and Backup Recovery Codes"
+            >
+              <QrCode className="w-3.5 h-3.5 text-rose-400" />
+              <span>2FA & QR Codes</span>
+            </button>
+            <button
+              type="button"
               onClick={() => onSelectModule('gateways')}
               className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium flex items-center gap-2 transition-colors cursor-pointer"
             >
@@ -94,27 +109,27 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
         </div>
       </div>
 
-      {/* 5 Key Metric Cards (Aligned with the 5 platform pillars) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+      {/* 6 Key Metric Cards (Aligned with the 6 platform pillars) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         {/* Card 1: Gross Celebration GMV & Stripe Rail */}
         <div 
           onClick={() => onSelectModule('financials')}
           className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer group shadow-sm"
         >
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">Gross Volume (GMV)</span>
+            <span className="font-semibold uppercase tracking-wider text-[11px]">Gross Volume</span>
             <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
               <DollarSign className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl font-bold text-white font-mono">
+          <div className="text-lg font-bold text-white font-mono">
             ${financialSummary.totalGmv.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 text-emerald-400 font-medium">
             <span className="flex items-center gap-0.5">
               <TrendingUp className="w-3 h-3" /> Live
             </span>
-            <span className="text-slate-400 font-normal">Stripe Rail: 100%</span>
+            <span className="text-slate-400 font-normal">Stripe Rail</span>
           </div>
         </div>
 
@@ -124,17 +139,17 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer group shadow-sm"
         >
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">Net Platform Profit</span>
+            <span className="font-semibold uppercase tracking-wider text-[11px]">Net Revenue</span>
             <div className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400">
               <Sparkles className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl font-bold text-white font-mono">
+          <div className="text-lg font-bold text-white font-mono">
             ${financialSummary.netCompanyRevenue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 text-slate-400">
             <span className="text-rose-400 font-medium">3.5% Take Rate</span>
-            <span>+ eGift Margins</span>
+            <span>Settled</span>
           </div>
         </div>
 
@@ -144,17 +159,17 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer group shadow-sm"
         >
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">Tango Card Float</span>
+            <span className="font-semibold uppercase tracking-wider text-[11px]">Tango Float</span>
             <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
               <Gift className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl font-bold text-white font-mono">
+          <div className="text-lg font-bold text-white font-mono">
             ${tangoConfig.currentBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 text-slate-400">
-            <span className="text-amber-400 font-medium">Auto-Reload Active</span>
-            <span>{tangoConfig.totalCardsIssued.toLocaleString()} Issued</span>
+            <span className="text-amber-400 font-medium">Auto-Reload</span>
+            <span>{tangoConfig.totalCardsIssued} Issued</span>
           </div>
         </div>
 
@@ -164,37 +179,58 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer group shadow-sm"
         >
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">AdMob Net Revenue</span>
+            <span className="font-semibold uppercase tracking-wider text-[11px]">AdMob Ads</span>
             <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400">
               <BarChart3 className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl font-bold text-white font-mono">
+          <div className="text-lg font-bold text-white font-mono">
             ${financialSummary.adMobNetProfit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 text-slate-400">
-            <span className="text-indigo-400 font-medium">Production Ads Ready</span>
-            <span>Live Units</span>
+            <span className="text-indigo-400 font-medium">Live Ads</span>
+            <span>Production</span>
           </div>
         </div>
 
-        {/* Card 5: Database Integrity & Snapshots */}
+        {/* Card 5: User Reviews & Play Store Rating */}
+        <div 
+          onClick={() => onSelectModule('reviews')}
+          className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-amber-500/40 transition-all cursor-pointer group shadow-sm"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+            <span className="font-semibold uppercase tracking-wider text-[11px]">Play Reviews</span>
+            <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
+              <Star className="w-4 h-4 fill-amber-400" />
+            </div>
+          </div>
+          <div className="text-lg font-bold text-white font-mono flex items-center gap-1">
+            <span>4.9★</span>
+            <span className="text-xs text-amber-400">Rating</span>
+          </div>
+          <div className="flex items-center justify-between text-[11px] mt-2 text-slate-400">
+            <span className="text-amber-400 font-medium">Auto-Popups</span>
+            <span>Active</span>
+          </div>
+        </div>
+
+        {/* Card 6: Database Integrity & Snapshots */}
         <div 
           onClick={() => onSelectModule('backups')}
           className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer group shadow-sm"
         >
           <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[11px]">Latest DB Backup</span>
+            <span className="font-semibold uppercase tracking-wider text-[11px]">DB Backup</span>
             <div className="p-1.5 rounded-lg bg-cyan-500/10 text-cyan-400">
               <HardDrive className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-xl font-bold text-white font-mono truncate">
+          <div className="text-lg font-bold text-white font-mono truncate">
             {latestBackup ? `${latestBackup.fileSizeMb} MB` : 'Ready'}
           </div>
           <div className="flex items-center justify-between text-[11px] mt-2 text-slate-400">
             <span className="text-cyan-400 font-medium">Firestore Live</span>
-            <span>joyful-days</span>
+            <span>Encrypted</span>
           </div>
         </div>
       </div>
@@ -456,14 +492,24 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
             </div>
 
             <div className="space-y-2.5 text-xs text-slate-300">
-              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 flex items-start gap-3">
-                <div className="w-2 h-2 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
-                <div>
-                  <span className="font-semibold text-white">Root Access Gate Restrictor:</span>
-                  <p className="text-slate-400 text-[11px] mt-0.5">
-                    Strict identity boundary locked exclusively to <code className="text-emerald-300 font-mono">admin@7tasker.com</code> with hardware 2FA challenge.
-                  </p>
+              <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 mt-1.5 shrink-0" />
+                  <div>
+                    <span className="font-semibold text-white">2FA TOTP & Backup Codes:</span>
+                    <p className="text-slate-400 text-[11px] mt-0.5">
+                      Status: <span className="text-emerald-400 font-medium">{twoFactorConfig.requiredForLogin ? 'Enforced' : 'Active'}</span> • {twoFactorConfig.backupCodes.filter((c) => !c.used).length} of {twoFactorConfig.backupCodes.length} recovery codes unused.
+                    </p>
+                  </div>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setIs2FAModalOpen(true)}
+                  className="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[11px] font-medium shrink-0 flex items-center gap-1 cursor-pointer"
+                >
+                  <QrCode className="w-3 h-3" />
+                  <span>Configure</span>
+                </button>
               </div>
 
               <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 flex items-start gap-3">
@@ -496,6 +542,12 @@ export const OverviewDashboard: React.FC<OverviewDashboardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 2FA Modal */}
+      <TwoFactorSettingsModal
+        isOpen={is2FAModalOpen}
+        onClose={() => setIs2FAModalOpen(false)}
+      />
     </div>
   );
 };
