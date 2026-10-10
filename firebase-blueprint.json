@@ -53,6 +53,10 @@
           "type": "boolean",
           "description": "Whether interstitial ads are enabled"
         },
+        "isPostSaveAdEnabled": {
+          "type": "boolean",
+          "description": "Whether post-save popup ads are enabled"
+        },
         "bannerAdUnitId": {
           "type": "string",
           "description": "Production or test Banner Ad Unit ID"
@@ -60,6 +64,10 @@
         "interstitialAdUnitId": {
           "type": "string",
           "description": "Production or test Interstitial Ad Unit ID"
+        },
+        "postSavePopupAdUnitId": {
+          "type": "string",
+          "description": "Production or test Post-Save Popup Ad Unit ID"
         },
         "bannerPlacement": {
           "type": "string",
@@ -143,12 +151,46 @@
         }
       },
       "required": ["title", "hostName"]
+    },
+    "ReviewReminderSettings": {
+      "title": "Review Reminder Settings",
+      "description": "Rules, cooldowns, and templates for review prompt engine",
+      "type": "object",
+      "properties": {
+        "isEnabled": { "type": "boolean" },
+        "initialDelayHours": { "type": "number" },
+        "retryCooldownHours": { "type": "number" },
+        "maxAttempts": { "type": "number" },
+        "fcmEnabled": { "type": "boolean" },
+        "eventCreationEnabled": { "type": "boolean" },
+        "pushTitle": { "type": "string" },
+        "pushBody": { "type": "string" }
+      }
+    },
+    "UserReviewReminder": {
+      "title": "User Review Reminder State",
+      "description": "Per-user reminder attempt counters, cooldowns, and statuses",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "attemptCount": { "type": "number" },
+        "status": { "type": "string" },
+        "lastAttemptAt": { "type": "string" },
+        "nextEligibleAt": { "type": "string" },
+        "lastFcmSentAt": { "type": "string" },
+        "lastTriggerSource": { "type": "string" }
+      },
+      "required": ["userId", "attemptCount", "status"]
     }
   },
   "firestore": {
     "/settings/{settingId}": {
       "schema": "GiftingSettings",
-      "description": "Configuration documents including /settings/gifting"
+      "description": "Configuration documents including /settings/gifting and /settings/review_reminders"
+    },
+    "/user_review_reminders/{userId}": {
+      "schema": "UserReviewReminder",
+      "description": "Persistent per-user review reminder state"
     },
     "/celebrations/{celebrationId}": {
       "schema": "Celebration",

@@ -1,6 +1,7 @@
 import {
   db,
   defaultDb,
+  auth,
   collection,
   collectionGroup,
   doc,
@@ -71,6 +72,7 @@ function normalizeCelebrationDoc(id: string, data: any, sourceDb: string, collec
 
   // Host info
   const hostName = 
+    data.personName || 
     data.hostName || 
     data.host_name || 
     data.host || 
@@ -92,7 +94,7 @@ function normalizeCelebrationDoc(id: string, data: any, sourceDb: string, collec
     '';
 
   // Date parsing
-  let eventDate = data.eventDate || data.date || data.event_date || data.dateTime || data.startDate || '';
+  let eventDate = data.dateIso || data.eventDate || data.date || data.event_date || data.dateTime || data.startDate || '';
   if (!eventDate && data.createdAt) {
     if (typeof data.createdAt?.toDate === 'function') {
       eventDate = data.createdAt.toDate().toISOString().substring(0, 10);
@@ -134,16 +136,36 @@ function normalizeCelebrationDoc(id: string, data: any, sourceDb: string, collec
     virtualRoomActive,
     guestCount,
     tangoCardsSelected,
+    hostUid: data.userId || data.hostUid || data.host_uid || data.ownerUid || data.creatorUid || undefined,
+    schemaVersion: typeof data.schemaVersion === 'number' ? data.schemaVersion : undefined,
+    createdAt: typeof data.createdAt === 'string' ? data.createdAt : (data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : undefined),
+    // Additional mapping from provided Android payload
+    daysAway: data.daysAway,
+    isToday: data.isToday,
+    isRecurring: data.isRecurring,
+    initialLetter: data.initialLetter,
+    avatarUrl: data.avatarUrl,
+    notes: data.notes,
+    updatedAt: data.updatedAt,
+    timeDescription: data.timeDescription,
+    milestone: data.milestone,
+    alarmTime: data.alarmTime,
+    reminderTiming: data.reminderTiming,
+    relationshipTag: data.relationshipTag,
+    birthYear: data.birthYear,
+    badgeEmoji: data.badgeEmoji,
+    singleGiftsRaised: Number(data.singleGiftsRaised ?? data.singleGiftsTotal ?? data.singleGifts ?? 0),
+    paymentMode: data.paymentMode || (data.giftPoolTarget > 0 ? 'group_pool' : 'event_only'),
   };
 }
 
 // Normalizes document from users collection
 function normalizeUserDoc(id: string, data: any): UserAccount {
   return {
-    id,
-    name: data.name || data.displayName || data.userName || data.fullName || 'JoyfulDays User',
+    id: data.uid || id,
+    name: data.displayName || data.name || data.userName || data.fullName || 'JoyfulDays User',
     email: data.email || data.userEmail || `${id}@user.joyfuldays.com`,
-    avatar: data.avatar || data.photoURL || data.profileImage || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80`,
+    avatar: data.photoUrl || data.avatar || data.photoURL || data.profileImage || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80`,
     country: data.country || 'United States',
     loyaltyTier: (data.loyaltyTier || 'Standard') as UserAccount['loyaltyTier'],
     celebrationsHosted: Number(data.celebrationsHosted ?? data.eventsCount ?? data.hostedCount ?? 0),
@@ -151,7 +173,8 @@ function normalizeUserDoc(id: string, data: any): UserAccount {
     totalGiftsVolume: Number(data.totalGiftsVolume ?? data.totalGiftVolume ?? data.giftVolume ?? 0),
     status: (data.status || 'active') as UserAccount['status'],
     joinedDate: data.joinedDate || data.createdAt || new Date().toISOString().substring(0, 10),
-    lastActive: data.lastActive || new Date().toISOString().replace('T', ' ').substring(0, 16),
+    lastActive: data.lastSignInAt ? new Date(data.lastSignInAt).toISOString().replace('T', ' ').substring(0, 16) : (data.lastActive || new Date().toISOString().replace('T', ' ').substring(0, 16)),
+    isGoogleUser: data.isGoogleUser !== undefined ? Boolean(data.isGoogleUser) : undefined,
   };
 }
 
@@ -248,8 +271,8 @@ class FirestoreSyncService {
       onUpdate(allEvents);
     };
 
-    // Target collection paths to listen to on each database
-    const targetCollections = ['celebrations', 'events', 'celebration_events', 'user_events'];
+    // Target collection paths to listen to on each database (Now Flattened Root Collections)
+    const targetCollections = ['events', 'celebrations'];
     const dbInstances: { name: string; instance: Firestore }[] = [
       { name: 'Primary (ai-studio-joyfuldaysadmind...)', instance: db },
       { name: 'Default ((default))', instance: defaultDb },
@@ -364,7 +387,9 @@ class FirestoreSyncService {
   // Create a celebration event in Firestore across both collections for 100% two-way sync test
   async createCelebrationInFirestore(event: Omit<CelebrationEvent, 'id'> & { id?: string }): Promise<string> {
     const eventId = event.id || `event_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const payload = {
+    const authenticatedUid = auth.currentUser?.uid || null;
+
+    const payload: Record<string, any> = {
       title: event.title,
       eventName: event.title,
       type: event.type,
@@ -381,10 +406,18 @@ class FirestoreSyncService {
       virtualRoomActive: event.virtualRoomActive,
       guestCount: event.guestCount,
       tangoCardsSelected: event.tangoCardsSelected,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      schemaVersion: 2,
       source: 'JoyfulDays Admin Console',
     };
+
+    // Authenticated Firebase User Ownership: only assign legitimate Firebase Auth UID
+    if (authenticatedUid) {
+      payload.hostUid = authenticatedUid;
+      payload.creatorUid = authenticatedUid;
+      payload.ownerUid = authenticatedUid;
+    }
 
     // Write to celebrations on both databases for maximum cross-client compatibility
     const writePromises = [
@@ -435,6 +468,7 @@ class FirestoreSyncService {
       rewardedAdUnitId: creds.rewardedAdUnitId,
       appOpenAdUnitId: creds.appOpenAdUnitId,
       nativeAdUnitId: creds.nativeAdUnitId,
+      postSavePopupAdUnitId: creds.postSavePopupAdUnitId,
       adUnits: adUnits.map((u) => ({
         id: u.id,
         name: u.name,
@@ -699,6 +733,85 @@ class FirestoreSyncService {
   }
 
   // Listen to Review Reminder Config
+  subscribeUserReviews(onUpdate: (reviews: UserReview[]) => void): () => void {
+    const unsubscribers: (() => void)[] = [];
+    const reviewsMap = new Map<string, UserReview>();
+
+    const emitMergedReviews = () => {
+      const allReviews = Array.from(reviewsMap.values());
+      allReviews.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      onUpdate(allReviews);
+    };
+
+    const dbInstances: { name: string; instance: Firestore }[] = [
+      { name: 'Primary', instance: db },
+      { name: 'Default', instance: defaultDb },
+    ];
+
+    dbInstances.forEach(({ name: dbName, instance }) => {
+      // Listen to both the organic Android 'reviews' collection and the simulated 'user_reviews' collection
+      const targetCollections = ['reviews', 'user_reviews'];
+
+      targetCollections.forEach(colName => {
+        try {
+          const reviewsCol = collection(instance, colName);
+          const unsub = onSnapshot(
+            reviewsCol,
+            (snapshot) => {
+              snapshot.docs.forEach((docSnap) => {
+                const data = docSnap.data();
+                
+                // Map the raw Android 'reviews' schema (or backend 'user_reviews') to the Admin UI 'UserReview' schema
+                const review: UserReview = {
+                  id: docSnap.id,
+                  userId: data.userId || 'unknown-user',
+                  userName: data.userDisplayName || data.userName || 'JoyfulDays User',
+                  userEmail: data.userEmail || 'unknown@example.com',
+                  rating: Number(data.rating) || 5,
+                  title: data.title || (data.tags && Array.isArray(data.tags) && data.tags.length > 0 ? data.tags[0] : 'In-App Review'),
+                  comment: data.feedback || data.comment || '',
+                  source: data.source || (colName === 'reviews' ? 'google_play_in_app' : 'unknown'),
+                  sentiment: data.sentiment || (Number(data.rating) >= 4 ? 'positive' : Number(data.rating) === 3 ? 'neutral' : 'negative'),
+                  deviceModel: data.deviceModel || 'Android Device',
+                  osVersion: data.osVersion || 'Android',
+                  appVersion: data.appVersion || 'Unknown',
+                  createdAt: data.submittedAtIso || (data.createdAt && typeof data.createdAt === 'number' ? new Date(data.createdAt).toISOString() : data.createdAt) || new Date().toISOString(),
+                  isPublic: data.isPublic !== undefined ? data.isPublic : true,
+                  adminResponse: data.adminResponse,
+                  respondedAt: data.respondedAt,
+                  // Preserve original fields underneath just in case they are used
+                  ...data,
+                };
+                
+                reviewsMap.set(docSnap.id, review);
+              });
+              snapshot.docChanges().forEach((change) => {
+                if (change.type === 'removed') {
+                  reviewsMap.delete(change.doc.id);
+                }
+              });
+              emitMergedReviews();
+            },
+            (error) => {
+              console.info(`[Firestore] User reviews listener info on ${dbName} (${colName}):`, error.message);
+            }
+          );
+          unsubscribers.push(unsub);
+        } catch (err) {
+          console.info(`[Firestore] User reviews listener setup on ${dbName} (${colName}):`, err);
+        }
+      });
+    });
+
+    return () => {
+      unsubscribers.forEach((u) => {
+        try {
+          u();
+        } catch {}
+      });
+    };
+  }
+
   listenToReviewConfig(callback: (config: Partial<ReviewReminderConfig>) => void): () => void {
     try {
       const unsub = onSnapshot(doc(db, 'settings', 'review_reminders'), (snapshot) => {
@@ -748,6 +861,26 @@ class FirestoreSyncService {
     await Promise.allSettled(syncPromises);
   }
 
+  // Dispatch Push Notification Trigger Signal to User Device Document
+  async dispatchPushNotificationTrigger(userId: string, targetToken?: string): Promise<void> {
+    const payload = {
+      userId,
+      targetToken: targetToken || '',
+      command: 'SEND_REVIEW_PUSH_NOTIFICATION',
+      status: 'pending',
+      dispatchedAt: serverTimestamp(),
+      dispatchedAtIso: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 3600000 * 24).toISOString(),
+    };
+
+    const syncPromises = [
+      setDoc(doc(db, 'user_push_triggers', userId), payload, { merge: true }),
+      setDoc(doc(defaultDb, 'user_push_triggers', userId), payload, { merge: true }),
+    ];
+
+    await Promise.allSettled(syncPromises);
+  }
+
   // Master AdMob Control & Remote Config Architecture (settings/admob)
   // Direct client writes are deprecated and restricted; mutations route through /api/admob/config
   async syncAdMobSettingsToFirestore(settings: AdMobSettingsConfig): Promise<void> {
@@ -766,6 +899,8 @@ class FirestoreSyncService {
             interstitialEnabled: Boolean(data.interstitialEnabled),
             bannerAdUnitId: String(data.bannerAdUnitId || ''),
             interstitialAdUnitId: String(data.interstitialAdUnitId || ''),
+            postSavePopupAdUnitId: String(data.postSavePopupAdUnitId || ''),
+            rewardedAdUnitId: String(data.rewardedAdUnitId || ''),
             bannerPlacement: (data.bannerPlacement as any) || 'BOTTOM',
             interstitialTrigger: (data.interstitialTrigger as any) || 'NATURAL_BREAK',
             interstitialFrequency: Number(data.interstitialFrequency ?? 5),
@@ -790,8 +925,12 @@ class FirestoreSyncService {
       adsEnabled: false,
       bannerEnabled: false,
       interstitialEnabled: false,
+      isPostSaveAdEnabled: false,
+      isRewardedAdEnabled: false,
       bannerAdUnitId: '',
       interstitialAdUnitId: '',
+      postSavePopupAdUnitId: '',
+      rewardedAdUnitId: '',
       bannerPlacement: 'BOTTOM',
       interstitialTrigger: 'NATURAL_BREAK',
       interstitialFrequency: 5,
@@ -839,6 +978,8 @@ class FirestoreSyncService {
             interstitialEnabled: Boolean(data.interstitialEnabled),
             bannerAdUnitId: String(data.bannerAdUnitId || ''),
             interstitialAdUnitId: String(data.interstitialAdUnitId || ''),
+            postSavePopupAdUnitId: String(data.postSavePopupAdUnitId || ''),
+            rewardedAdUnitId: String(data.rewardedAdUnitId || ''),
             bannerPlacement: (data.bannerPlacement as any) || 'BOTTOM',
             interstitialTrigger: (data.interstitialTrigger as any) || 'NATURAL_BREAK',
             interstitialFrequency: Number(data.interstitialFrequency ?? 5),

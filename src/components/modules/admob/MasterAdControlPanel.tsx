@@ -37,20 +37,32 @@ export const MasterAdControlPanel: React.FC<MasterAdControlPanelProps> = ({
 
   useEffect(() => {
     if (!isDirty) {
-      setForm(settings);
+      setForm((current) => {
+        // Only update if settings are actually different from current form state
+        if (JSON.stringify(current) !== JSON.stringify(settings)) {
+          return settings;
+        }
+        return current;
+      });
     }
   }, [settings, isDirty]);
 
   // Update local field
   const handleFieldChange = <K extends keyof AdMobSettingsConfig>(key: K, value: AdMobSettingsConfig[K]) => {
+    // Trim string inputs
+    let processedValue = value;
+    if (typeof value === 'string' && (key === 'bannerAdUnitId' || key === 'interstitialAdUnitId' || key === 'postSavePopupAdUnitId' || key === 'rewardedAdUnitId')) {
+      processedValue = value.trim() as AdMobSettingsConfig[K];
+    }
+    
     // If activating an ad toggle, require double confirmation to ensure compliance with "Advertising must remain OFF by default"
-    if ((key === 'adsEnabled' || key === 'bannerEnabled' || key === 'interstitialEnabled') && value === true) {
+    if ((key === 'adsEnabled' || key === 'bannerEnabled' || key === 'interstitialEnabled' || key === 'isPostSaveAdEnabled' || key === 'isRewardedAdEnabled') && value === true) {
       setPendingActivationField(key);
       setShowConfirmModal(true);
       return;
     }
 
-    setForm((prev) => ({ ...prev, [key]: value }));
+    setForm((prev) => ({ ...prev, [key]: processedValue }));
     setIsDirty(true);
   };
 
@@ -63,12 +75,29 @@ export const MasterAdControlPanel: React.FC<MasterAdControlPanelProps> = ({
     setPendingActivationField(null);
   };
 
+  const [error, setError] = useState<string | null>(null);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    
+    // Validation: Post-Save Popup Ad
+    if (form.isPostSaveAdEnabled && (!form.postSavePopupAdUnitId || !form.postSavePopupAdUnitId.trim())) {
+      setError('Enter a valid Post-Save Popup Ad Unit ID before enabling this placement.');
+      return;
+    }
+    // Validation: Rewarded Ad
+    if (form.isRewardedAdEnabled && (!form.rewardedAdUnitId || !form.rewardedAdUnitId.trim())) {
+      setError('Enter a valid Rewarded Ad Unit ID before enabling this placement.');
+      return;
+    }
+
     try {
       await onSave(form);
       setIsDirty(false);
-    } catch {
+    } catch (err: any) {
+      console.error('Save failed:', err);
+      setError(err?.message || 'Failed to save settings. Please try again.');
       // Keep isDirty true so user can retry
     }
   };
@@ -78,8 +107,12 @@ export const MasterAdControlPanel: React.FC<MasterAdControlPanelProps> = ({
       adsEnabled: false,
       bannerEnabled: false,
       interstitialEnabled: false,
+      isPostSaveAdEnabled: false,
+      isRewardedAdEnabled: false,
       bannerAdUnitId: '',
       interstitialAdUnitId: '',
+      postSavePopupAdUnitId: '',
+      rewardedAdUnitId: '',
       bannerPlacement: 'BOTTOM',
       interstitialTrigger: 'NATURAL_BREAK',
       interstitialFrequency: 5,
@@ -169,13 +202,81 @@ export const MasterAdControlPanel: React.FC<MasterAdControlPanelProps> = ({
             <span className="text-[11px] text-slate-400 font-mono">Real-Time Firebase Document Sync</span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Banner Ad Configuration Card */}
+              {/* Post-Save Popup Ad Configuration Card */}
             <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="font-bold text-white text-xs block">Banner Ads</span>
-                  <span className="text-[11px] text-slate-400">Non-intrusive persistent screen banner</span>
+                  <span className="font-bold text-white text-xs block">Post-Save Popup Ad</span>
+                  <span className="text-[11px] text-slate-400">Small banner displayed inside the Event Created popup</span>
+                </div>
+                <button
+                  type="button"
+                  id="toggle-post-save-enabled"
+                  onClick={() => handleFieldChange('isPostSaveAdEnabled', !form.isPostSaveAdEnabled)}
+                  className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors cursor-pointer ${
+                    form.isPostSaveAdEnabled
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}
+                >
+                  {form.isPostSaveAdEnabled ? 'ENABLED' : 'DISABLED'}
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold text-slate-300 block">Popup Ad Unit ID</label>
+                <input
+                  type="text"
+                  id="input-post-save-ad-unit-id"
+                  value={form.postSavePopupAdUnitId || ''}
+                  onChange={(e) => handleFieldChange('postSavePopupAdUnitId', e.target.value)}
+                  placeholder="e.g. ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY"
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl font-mono text-white text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+            </div>
+            {/* ... */}
+
+            {/* Rewarded Ad Configuration Card */}
+            <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-white text-xs block">Rewarded Video Ads</span>
+                  <span className="text-[11px] text-slate-400">High-yield ads that reward users</span>
+                </div>
+                <button
+                  type="button"
+                  id="toggle-rewarded-enabled"
+                  onClick={() => handleFieldChange('isRewardedAdEnabled', !form.isRewardedAdEnabled)}
+                  className={`px-3 py-1 rounded-full text-xs font-bold border transition-colors cursor-pointer ${
+                    form.isRewardedAdEnabled
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}
+                >
+                  {form.isRewardedAdEnabled ? 'ENABLED' : 'DISABLED'}
+                </button>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[11px] font-semibold text-slate-300 block">Rewarded Ad Unit ID</label>
+                <input
+                  type="text"
+                  id="input-rewarded-ad-unit-id"
+                  value={form.rewardedAdUnitId || ''}
+                  onChange={(e) => handleFieldChange('rewardedAdUnitId', e.target.value)}
+                  placeholder="e.g. ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY"
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl font-mono text-white text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            {/* Main Banner Ad Configuration Card */}
+            <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-white text-xs block">Main Banner Ads</span>
+                  <span className="text-[11px] text-slate-400">Standard banner displayed at screen edges</span>
                 </div>
                 <button
                   type="button"
@@ -196,47 +297,29 @@ export const MasterAdControlPanel: React.FC<MasterAdControlPanelProps> = ({
                 <input
                   type="text"
                   id="input-banner-ad-unit-id"
-                  value={form.bannerAdUnitId}
+                  value={form.bannerAdUnitId || ''}
                   onChange={(e) => handleFieldChange('bannerAdUnitId', e.target.value)}
-                  placeholder="e.g. ca-app-pub-3940256099942544/6300978111 or custom"
+                  placeholder="e.g. ca-app-pub-XXXXXXXXXXXXXXXX/YYYYYYYYYY"
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl font-mono text-white text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
                 />
-                <p className="text-[10px] text-slate-500">Leave blank to use default production unit or test unit.</p>
               </div>
 
               <div className="space-y-1.5 pt-2">
-                <label className="text-[11px] font-semibold text-slate-300 block">Banner Screen Placement</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    id="placement-bottom-btn"
-                    onClick={() => handleFieldChange('bannerPlacement', 'BOTTOM')}
-                    className={`py-2 px-3 rounded-lg text-xs font-semibold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      form.bannerPlacement === 'BOTTOM'
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-850'
-                    }`}
-                  >
-                    <span>BOTTOM (Standard)</span>
-                  </button>
-                  <button
-                    type="button"
-                    id="placement-top-btn"
-                    onClick={() => handleFieldChange('bannerPlacement', 'TOP')}
-                    className={`py-2 px-3 rounded-lg text-xs font-semibold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                      form.bannerPlacement === 'TOP'
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-850'
-                    }`}
-                  >
-                    <span>TOP (Header)</span>
-                  </button>
-                </div>
+                <label className="text-[11px] font-semibold text-slate-300 block">Banner Position</label>
+                <select
+                  id="select-banner-placement"
+                  value={form.bannerPlacement}
+                  onChange={(e) => handleFieldChange('bannerPlacement', e.target.value as 'TOP' | 'BOTTOM')}
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                >
+                  <option value="TOP">TOP</option>
+                  <option value="BOTTOM">BOTTOM</option>
+                </select>
               </div>
             </div>
 
-            {/* Interstitial Ad Configuration Card */}
-            <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+        {/* Interstitial Ad Configuration Card */}
+        <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="font-bold text-white text-xs block">Interstitial Ads</span>
@@ -261,7 +344,7 @@ export const MasterAdControlPanel: React.FC<MasterAdControlPanelProps> = ({
                 <input
                   type="text"
                   id="input-interstitial-ad-unit-id"
-                  value={form.interstitialAdUnitId}
+                  value={form.interstitialAdUnitId || ''}
                   onChange={(e) => handleFieldChange('interstitialAdUnitId', e.target.value)}
                   placeholder="e.g. ca-app-pub-3940256099942544/1033173712 or custom"
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl font-mono text-white text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
@@ -291,8 +374,6 @@ export const MasterAdControlPanel: React.FC<MasterAdControlPanelProps> = ({
               </div>
             </div>
           </div>
-        </div>
-
         {/* Section 2: Timing, Frequency, Cooldown & Session Limits */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-800">
@@ -464,6 +545,13 @@ export const MasterAdControlPanel: React.FC<MasterAdControlPanelProps> = ({
           </div>
         </div>
       </form>
+
+      {error && (
+        <div className="p-4 rounded-xl bg-rose-950/50 border border-rose-500/50 text-rose-300 text-xs flex items-center gap-3 shadow-lg">
+          <AlertTriangle className="w-5 h-5 shrink-0" />
+          <p>{error}</p>
+        </div>
+      )}
 
       {/* Confirmation Modal for Activating Live Ads */}
       {showConfirmModal && (

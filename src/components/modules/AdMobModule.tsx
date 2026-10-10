@@ -56,6 +56,7 @@ import { MasterAdControlPanel } from './admob/MasterAdControlPanel';
 import { AdMobAnalyticsPanel } from './admob/AdMobAnalyticsPanel';
 import { AndroidSafetyContractPanel } from './admob/AndroidSafetyContractPanel';
 import { AdMobAuditLogPanel } from './admob/AdMobAuditLogPanel';
+import { RemoveAdsAndAnalyticsPanel } from './admob/RemoveAdsAndAnalyticsPanel';
 
 export const AdMobModule: React.FC = () => {
   const [adUnits, setAdUnits] = useState<AdUnitConfig[]>(StorageService.getAdUnits());
@@ -80,7 +81,7 @@ export const AdMobModule: React.FC = () => {
   const [engagementAnalytics, setEngagementAnalytics] = useState<AppEngagementAnalytics>(StorageService.getEngagementAnalytics());
   const [adEventMetrics, setAdEventMetrics] = useState<AdEventMetrics>(StorageService.getAdEventMetrics());
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(StorageService.getAuditLogs());
-  const [activeTab, setActiveTab] = useState<'master-control' | 'ad-units' | 'analytics' | 'safety-contract' | 'audit-log'>('master-control');
+  const [activeTab, setActiveTab] = useState<'master-control' | 'ad-units' | 'analytics' | 'safety-contract' | 'audit-log' | 'remove-ads-analytics'>('master-control');
   const [isSyncingSettings, setIsSyncingSettings] = useState(false);
   const [firestoreStatus, setFirestoreStatus] = useState<'connected' | 'connecting' | 'fallback' | 'error'>('connected');
 
@@ -146,6 +147,8 @@ export const AdMobModule: React.FC = () => {
         'maxInterstitialsPerSession',
         'bannerAdUnitId',
         'interstitialAdUnitId',
+        'isPostSaveAdEnabled',
+        'postSavePopupAdUnitId',
       ];
 
       for (const key of keysToCheck) {
@@ -252,6 +255,9 @@ export const AdMobModule: React.FC = () => {
       if (unit.type === 'native_advanced' && formData.nativeAdUnitId) {
         return { ...unit, adUnitId: formData.nativeAdUnitId };
       }
+      if (unit.type === 'post_save_popup' && formData.postSavePopupAdUnitId) {
+        return { ...unit, adUnitId: formData.postSavePopupAdUnitId };
+      }
       return unit;
     });
 
@@ -287,6 +293,7 @@ export const AdMobModule: React.FC = () => {
     if (isEditingUnit.type === 'rewarded_video') updatedCreds.rewardedAdUnitId = isEditingUnit.adUnitId;
     if (isEditingUnit.type === 'app_open') updatedCreds.appOpenAdUnitId = isEditingUnit.adUnitId;
     if (isEditingUnit.type === 'native_advanced') updatedCreds.nativeAdUnitId = isEditingUnit.adUnitId;
+    if (isEditingUnit.type === 'post_save_popup') updatedCreds.postSavePopupAdUnitId = isEditingUnit.adUnitId;
     StorageService.updateAdMobCredentials(updatedCreds);
     setAdMobCreds(updatedCreds);
 
@@ -407,6 +414,18 @@ export const AdMobModule: React.FC = () => {
         >
           <span>5. Audit Trail ({auditLogs.filter(l => l.module === 'AdMob' || l.action.includes('ADMOB')).length})</span>
         </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('remove-ads-analytics')}
+          className={`px-4 py-2 rounded-xl font-bold flex items-center gap-2 transition-all whitespace-nowrap cursor-pointer ${
+            activeTab === 'remove-ads-analytics'
+              ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
+              : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-850'
+          }`}
+        >
+          <span>6. Stripe Remove Ads & Analytics</span>
+        </button>
       </div>
 
       {feedbackMsg && (
@@ -435,6 +454,30 @@ export const AdMobModule: React.FC = () => {
           isSyncing={isSyncingSettings}
           firestoreStatus={firestoreStatus}
         />
+      )}
+
+      {/* 3. ANALYTICS PANEL */}
+      {activeTab === 'analytics' && (
+        <AdMobAnalyticsPanel
+          engagement={engagementAnalytics}
+          adMetrics={adEventMetrics}
+          adsEnabled={admobSettings.adsEnabled}
+        />
+      )}
+
+      {/* 4. SAFETY CONTRACT PANEL */}
+      {activeTab === 'safety-contract' && (
+        <AndroidSafetyContractPanel />
+      )}
+
+      {/* 5. AUDIT LOG PANEL */}
+      {activeTab === 'audit-log' && (
+        <AdMobAuditLogPanel logs={auditLogs} />
+      )}
+
+      {/* 6. STRIPE REMOVE ADS & ANALYTICS PANEL */}
+      {activeTab === 'remove-ads-analytics' && (
+        <RemoveAdsAndAnalyticsPanel />
       )}
 
       {/* 2. AD UNITS & WATERFALL PANEL */}
@@ -1038,6 +1081,19 @@ export const AdMobModule: React.FC = () => {
                       value={formData.appOpenAdUnitId}
                       onChange={(e) => setFormData({ ...formData, appOpenAdUnitId: e.target.value })}
                       placeholder="ca-app-pub-8492049102930192/5839201948"
+                      className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono text-white text-xs mt-1"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-300 flex justify-between">
+                      <span>5. Post-Save Popup Ad Unit ID</span>
+                      <span className="text-[10px] text-emerald-400 font-normal">Popup</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.postSavePopupAdUnitId || ''}
+                      onChange={(e) => setFormData({ ...formData, postSavePopupAdUnitId: e.target.value })}
+                      placeholder="ca-app-pub-8492049102930192/XXXXXXXXXX"
                       className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg font-mono text-white text-xs mt-1"
                     />
                   </div>

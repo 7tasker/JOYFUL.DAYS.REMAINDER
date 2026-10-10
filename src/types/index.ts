@@ -253,6 +253,7 @@ export type AdMobCredentials = {
   rewardedAdUnitId: string;
   appOpenAdUnitId: string;
   nativeAdUnitId: string;
+  postSavePopupAdUnitId: string;
   autoSyncToFirestore: boolean;
   lastUpdated: string;
 };
@@ -272,8 +273,12 @@ export type AdMobSettingsConfig = {
   adsEnabled: boolean; // Master Ads ON/OFF (Default: false)
   bannerEnabled: boolean; // Banner ON/OFF (Default: false)
   interstitialEnabled: boolean; // Interstitial ON/OFF (Default: false)
+  isPostSaveAdEnabled: boolean; // Post-save popup ad toggle
+  isRewardedAdEnabled: boolean; // Rewarded video ad toggle
   bannerAdUnitId: string;
   interstitialAdUnitId: string;
+  postSavePopupAdUnitId: string; // Post-save ad unit ID
+  rewardedAdUnitId: string; // Rewarded video ad unit ID
   bannerPlacement: BannerPlacement;
   interstitialTrigger: InterstitialTriggerStrategy;
   interstitialFrequency: number;
@@ -391,6 +396,7 @@ export type UserAccount = {
   lastActive: string;
   country: string;
   loyaltyTier: 'Gold' | 'Platinum' | 'Diamond' | 'Standard';
+  isGoogleUser?: boolean; // Android Specific Field
 };
 
 export type CelebrationEvent = {
@@ -407,6 +413,27 @@ export type CelebrationEvent = {
   virtualRoomActive: boolean;
   guestCount: number;
   tangoCardsSelected: string[];
+  hostUid?: string;
+  schemaVersion?: number;
+  createdAt?: string;
+  // Android Specific Fields
+  daysAway?: number;
+  isToday?: boolean;
+  isRecurring?: boolean;
+  initialLetter?: string;
+  avatarUrl?: string;
+  notes?: string;
+  updatedAt?: number | string;
+  timeDescription?: string;
+  milestone?: string;
+  alarmTime?: string;
+  reminderTiming?: string;
+  relationshipTag?: string;
+  birthYear?: number;
+  badgeEmoji?: string;
+  // New Payment & Gifting Fields
+  singleGiftsRaised?: number;
+  paymentMode?: 'event_only' | 'group_pool' | 'single_gifts' | 'both';
 };
 
 // Module 4: Database Backup Management & Audit Logs

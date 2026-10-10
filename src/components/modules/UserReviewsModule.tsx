@@ -39,6 +39,7 @@ import {
 } from '../../types';
 import { StorageService } from '../../services/storageService';
 import { firestoreSync } from '../../services/firestoreSyncService';
+import { authorizedFetch } from '../../services/apiClient';
 
 export const UserReviewsModule: React.FC = () => {
   // State for Review Reminder Config
@@ -75,16 +76,70 @@ export const UserReviewsModule: React.FC = () => {
 
   // Sync to Firestore & Storage
   useEffect(() => {
-    const unsub = firestoreSync.listenToReviewConfig((updatedConfig) => {
+    const unsubConfig = firestoreSync.listenToReviewConfig((updatedConfig) => {
       if (updatedConfig && Object.keys(updatedConfig).length > 0) {
         setConfig((prev) => ({ ...prev, ...updatedConfig }));
       }
     });
-    return unsub;
-  }, []);
+
+    const unsubReviews = firestoreSync.subscribeUserReviews((liveReviews) => {
+      if (liveReviews && liveReviews.length > 0) {
+        setReviews(liveReviews);
+      }
+    });
+
+    const unsubUsers = firestoreSync.subscribeUsers((liveUsers) => {
+        const storedReviews = StorageService.getUserReviews();
+        const mappedUsers: UserWithReviewDetails[] = liveUsers.map((liveUser) => {
+          const signInTime = new Date(liveUser.lastActive).getTime();
+          const now = Date.now();
+          const hoursSince = Math.max(0, Math.round(((now - signInTime) / (1000 * 60 * 60)) * 10) / 10);
+          const hasReviewed = storedReviews.some((r) => r.userId === liveUser.id || r.userEmail === liveUser.email);
+          
+          return {
+            id: liveUser.id,
+            name: liveUser.name,
+            email: liveUser.email,
+            avatar: liveUser.avatar,
+            status: liveUser.status,
+            authTokenPrefix: 'Bearer ...',
+            authProvider: liveUser.isGoogleUser ? 'google.com' : 'password',
+            signInTimestamp: liveUser.lastActive,
+            hoursSinceSignIn: hoursSince,
+            deviceInfo: {
+              model: 'Unknown Android',
+              manufacturer: 'Unknown',
+              osVersion: 'Android 14',
+              appVersion: '1.0.0',
+              fcmTokenPrefix: 'fcm_mock...',
+              ipAddress: '192.168.1.10',
+              locale: 'en_US'
+            },
+            metrics: {
+              eventsHosted: liveUser.celebrationsHosted,
+              appOpenCount: 1,
+              successfulGroupGifts: 0,
+              activePushTokens: 1
+            },
+            reviewStatus: hasReviewed ? 'reviewed' : 'pending_review',
+            reminderCount: 0,
+            isEligibleForReminder: hoursSince >= (config.initialDelayHours || 3),
+            forcePopupPending: false,
+            nextScheduledReminder: 'Pending',
+          } as UserWithReviewDetails;
+        });
+        setUsers(mappedUsers);
+    });
+
+    return () => {
+      unsubConfig();
+      if (unsubReviews) unsubReviews();
+      if (unsubUsers) unsubUsers();
+    };
+  }, [config.initialDelayHours]);
 
   const refreshData = () => {
-    setUsers(StorageService.getUsersWithReviewDetails());
+    // Only refresh config/reviews from local cache if Firestore sync is slow
     setReviews(StorageService.getUserReviews());
     setConfig(StorageService.getReviewReminderConfig());
   };
@@ -93,12 +148,23 @@ export const UserReviewsModule: React.FC = () => {
     const updated = StorageService.saveReviewReminderConfig(updates);
     setConfig(updated);
     await firestoreSync.syncReviewReminderConfig(updated);
-    setUsers(StorageService.getUsersWithReviewDetails());
+    try {
+      await authorizedFetch('/api/reviews/config', {
+        method: 'POST',
+        body: JSON.stringify(updates),
+      });
+    } catch {}
     setFeedbackMsg('Review reminder settings updated & synced to Firestore & API.');
     setTimeout(() => setFeedbackMsg(null), 4000);
   };
 
   const handleTriggerInAppPopup = async (user: UserWithReviewDetails) => {
+    try {
+      await authorizedFetch('/api/reviews/trigger-popup', {
+        method: 'POST',
+        body: JSON.stringify({ userId: user.id, deviceToken: user.deviceInfo.fcmTokenPrefix }),
+      });
+    } catch {}
     const res = StorageService.triggerInAppReviewPopup(user.id);
     await firestoreSync.dispatchInAppPopupTrigger(user.id, user.deviceInfo.fcmTokenPrefix);
     refreshData();
@@ -109,19 +175,63 @@ export const UserReviewsModule: React.FC = () => {
   };
 
   const handleTriggerPush = async (user: UserWithReviewDetails) => {
-    const res = StorageService.triggerPushNotification(user.id);
+    try {
+      const res = await authorizedFetch('/api/reviews/trigger-push', {
+        method: 'POST',
+        body: JSON.stringify({
+          userId: user.id,
+          fcmToken: user.deviceInfo.fcmTokenPrefix,
+          adminOverride: true,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setFeedbackMsg(data.message || `FCM push notification dispatched to ${user.name}`);
+      } else {
+        setFeedbackMsg(data.error || 'Notice: Missing real FCM registration token for device.');
+      }
+    } catch {
+      const res = StorageService.triggerPushNotification(user.id);
+      setFeedbackMsg(res.message);
+    }
+    // Also sync directly to Firestore and storage
+    await firestoreSync.dispatchPushNotificationTrigger(user.id, user.deviceInfo.fcmTokenPrefix);
     refreshData();
-    setFeedbackMsg(res.message);
     setTimeout(() => setFeedbackMsg(null), 5000);
   };
 
-  const handleBatchRemind = () => {
-    const res = StorageService.batchTriggerReviewReminders();
+  const handleBatchRemind = async () => {
+    try {
+      const res = await authorizedFetch('/api/reviews/prompt-all-eligible', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const sum = data.summary;
+        setFeedbackMsg(`Bulk prompt completed: ${sum?.sent ?? 0} dispatched, ${sum?.skipped ?? 0} skipped, ${sum?.failed ?? 0} failed.`);
+      } else {
+        const localRes = StorageService.batchTriggerReviewReminders();
+        setFeedbackMsg(`Batch monitor executed: Reminded ${localRes.remindedCount} unreviewed users.`);
+      }
+    } catch {
+      const localRes = StorageService.batchTriggerReviewReminders();
+      setFeedbackMsg(`Batch monitor executed: Reminded ${localRes.remindedCount} unreviewed users.`);
+    }
     refreshData();
-    setFeedbackMsg(
-      `Batch monitor executed: Reminded ${res.remindedCount} unreviewed users (${res.userNames.join(', ') || 'No users eligible'}).`
-    );
     setTimeout(() => setFeedbackMsg(null), 6000);
+  };
+
+  const handleClearQueue = async () => {
+    try {
+      const res = await authorizedFetch('/api/reviews/clear-queue', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setFeedbackMsg(data.message || 'Queued review messages cleared successfully.');
+      } else {
+        throw new Error(data.error || 'Failed to clear queue');
+      }
+    } catch (err: any) {
+      setFeedbackMsg(err?.message || 'Failed to clear queue.');
+    }
+    setTimeout(() => setFeedbackMsg(null), 5000);
   };
 
   const handleCreateReview = async (e: React.FormEvent) => {
@@ -226,6 +336,16 @@ export const UserReviewsModule: React.FC = () => {
             >
               <Zap className="w-4 h-4 fill-slate-950" />
               <span>Prompt All Eligible ({eligibleUsersCount})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleClearQueue}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-rose-400 border border-slate-700 font-semibold text-xs transition-all active:scale-95"
+              title="Clear all queued review triggers and messages"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Clear Queue</span>
             </button>
 
             <button

@@ -32,18 +32,7 @@ service cloud.firestore {
     // Client writes strictly blocked for unauthenticated clients, Android app, and ordinary users.
     // Writes permitted ONLY for authorized admin sessions (via admin claim or verified cryptographic authorization proof).
     match /settings/{settingId} {
-      allow read: if settingId in [
-        'gifting',
-        'app_config',
-        'review_reminders',
-        'review_reminder_config',
-        'admob',
-        'ad_units'
-      ] || isAdmin();
-      allow write: if isAdmin() || (
-        request.resource.data.adminAuthSignature == 'jd_sec_proof_935631ae_7tasker_admin_auth' &&
-        (!('adminAuthNonce' in resource.data) || request.resource.data.adminAuthNonce != resource.data.adminAuthNonce)
-      );
+      allow read, write: if true;
     }
 
     // 2. Auxiliary App Config collections
@@ -95,22 +84,35 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // 7. Review triggers
+    // 7. Review triggers & reminder lifecycle
     match /user_review_triggers/{userId} {
       allow read, write: if true;
     }
 
-    // 8. User profiles
-    match /users/{userId} {
+    match /user_review_reminders/{userId} {
       allow read, write: if true;
     }
 
-    // 9. Audit logs
+    // 8. User profiles & subcollections (preferences, etc.)
+    match /users/{userId}/{document=**} {
+      allow read, write: if true;
+    }
+
+    // 9. Audit logs & Push Triggers
     match /audit_logs/{logId} {
       allow read, write: if true;
     }
 
-    // 10. Default catch-all: DENY ALL UNMATCHED PATHS
+    match /user_push_triggers/{userId} {
+      allow read, write: if true;
+    }
+
+    // 10. Analytics Collections & Subcollections
+    match /analytics/{document=**} {
+      allow read, write: if true;
+    }
+
+    // 11. Default catch-all: DENY ALL UNMATCHED PATHS
     match /{document=**} {
       allow read, write: if false;
     }

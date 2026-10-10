@@ -16,7 +16,7 @@ import { AdminUser, TwoFactorSecurityConfig } from '../../types';
 import { StorageService } from '../../services/storageService';
 import { AdminSessionService } from '../../services/adminSessionService';
 import { TwoFactorSettingsModal } from '../modals/TwoFactorSettingsModal';
-import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged } from '../../services/firebase';
+import { auth, googleProvider, signInWithPopup, signOut, onAuthStateChanged, db, doc, setDoc, serverTimestamp } from '../../services/firebase';
 
 interface AdminAuthGateProps {
   currentUser: AdminUser | null;
@@ -127,6 +127,19 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
 
       // Force token refresh to capture new custom claim in JWT
       await user.getIdToken(true);
+
+      // Root Cause Fix: Add the missing users/{uid} profile write using the correct named DB
+      try {
+        await setDoc(doc(db, 'users', user.uid), {
+          name: user.displayName || 'JoyfulDays User',
+          email: user.email,
+          avatar: user.photoURL || '',
+          createdAt: serverTimestamp(),
+          lastActive: serverTimestamp()
+        }, { merge: true });
+      } catch (writeErr) {
+        console.warn('Failed to write user profile to named DB:', writeErr);
+      }
 
       const adminData = StorageService.getAdminUser();
       adminData.email = user.email || 'admin@7tasker.com';
@@ -255,18 +268,6 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
             </div>
           </div>
 
-          <div className="p-3 mb-5 rounded-xl bg-slate-950/80 border border-slate-800/80 text-xs text-slate-300 flex items-start gap-2.5">
-            <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <div>
-              <span className="font-semibold text-white">Permitted Root Administrator:</span>
-              <p className="font-mono text-emerald-300 mt-0.5 text-[13px] font-medium tracking-wide">
-                admin@7tasker.com
-              </p>
-              <p className="text-[11px] text-slate-400 mt-1">
-                Access is cryptographically restricted. All unauthorized login attempts are blocked, logged, and monitored.
-              </p>
-            </div>
-          </div>
 
           {errorMsg && (
             <div className="mb-5 p-3.5 rounded-xl bg-rose-950/60 border border-rose-700/60 text-rose-200 text-xs flex items-start gap-2.5 animate-shake">

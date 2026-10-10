@@ -439,8 +439,9 @@ export const CelebrationsModule: React.FC = () => {
                   <th className="p-3.5">Host</th>
                   <th className="p-3.5">Event Date</th>
                   <th className="p-3.5">RSVP / Guests</th>
-                  <th className="p-3.5">Group Gift Pool Target</th>
-                  <th className="p-3.5">Funded</th>
+                  <th className="p-3.5">Group Pool</th>
+                  <th className="p-3.5">Single Gifts</th>
+                  <th className="p-3.5">Payment Mode</th>
                   <th className="p-3.5">Status</th>
                   <th className="p-3.5 text-right">Actions</th>
                 </tr>
@@ -470,7 +471,9 @@ export const CelebrationsModule: React.FC = () => {
                         </td>
                         <td className="p-3.5">
                           <div className="font-medium text-slate-200">{c.hostName}</div>
-                          <div className="text-[10px] text-slate-400">{c.hostEmail || 'No email provided'}</div>
+                          <div className="text-[10px] text-slate-400">
+                            {c.hostEmail || c.hostUid || 'Unknown User'}
+                          </div>
                         </td>
                         <td className="p-3.5 font-mono text-slate-300">
                           {c.eventDate}
@@ -483,21 +486,34 @@ export const CelebrationsModule: React.FC = () => {
                           <div className="font-mono font-bold text-emerald-400">
                             ${c.giftPoolRaised.toLocaleString()}
                           </div>
-                          <div className="text-[10px] text-slate-400 font-mono">
-                            Target: ${c.giftPoolTarget.toLocaleString()}
-                          </div>
-                        </td>
-                        <td className="p-3.5 w-36">
-                          <div className="flex items-center justify-between text-[10px] font-mono text-slate-300 mb-1">
+                          <div className="flex items-center justify-between text-[9px] font-mono text-slate-300 mt-1 mb-0.5">
                             <span>{fundPercent}%</span>
-                            <span>${c.giftPoolRaised}</span>
+                            <span className="text-slate-500">of ${c.giftPoolTarget.toLocaleString()}</span>
                           </div>
-                          <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                          <div className="w-full bg-slate-800 h-1 rounded-full overflow-hidden">
                             <div
                               className="h-full bg-gradient-to-r from-amber-500 to-emerald-500 rounded-full"
                               style={{ width: `${fundPercent}%` }}
                             />
                           </div>
+                        </td>
+                        <td className="p-3.5">
+                          <div className="font-mono font-bold text-violet-400">
+                            ${(c.singleGiftsRaised || 0).toLocaleString()}
+                          </div>
+                          <div className="text-[9px] text-slate-400 uppercase mt-0.5">
+                            Direct Gifts
+                          </div>
+                        </td>
+                        <td className="p-3.5">
+                          <span className={`px-2 py-0.5 rounded font-semibold text-[9px] uppercase border ${
+                            c.paymentMode === 'group_pool' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' :
+                            c.paymentMode === 'single_gifts' ? 'bg-violet-500/10 text-violet-300 border-violet-500/20' :
+                            c.paymentMode === 'both' ? 'bg-blue-500/10 text-blue-300 border-blue-500/20' :
+                            'bg-slate-800 text-slate-400 border-slate-700'
+                          }`}>
+                            {c.paymentMode?.replace('_', ' ') || 'Event Only'}
+                          </span>
                         </td>
                         <td className="p-3.5">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
