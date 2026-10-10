@@ -267,32 +267,32 @@ export const INITIAL_ADMOB_SETTINGS: AdMobSettingsConfig = {
 // Firebase / Google Analytics Engagement Telemetry Contract
 export const INITIAL_ENGAGEMENT_ANALYTICS: AppEngagementAnalytics = {
   activeUsers: {
-    dau: 1420,
-    wau: 6850,
-    mau: 18200,
+    dau: 0,
+    wau: 0,
+    mau: 0,
   },
   newUsers: {
-    today: 84,
-    thisWeek: 560,
-    thisMonth: 2310,
+    today: 0,
+    thisWeek: 0,
+    thisMonth: 0,
   },
   sessions: {
-    totalToday: 3840,
-    avgDurationSeconds: 252, // 4m 12s
+    totalToday: 0,
+    avgDurationSeconds: 0,
     sessionsWithAdsCount: 0,
     sessionsWithAdsPercent: 0,
   },
   actions: {
-    eventCreated: 842,
-    eventEdited: 418,
-    eventViewed: 4920,
-    reminderCreated: 1290,
-    calendarNavigated: 3140,
+    eventCreated: 0,
+    eventEdited: 0,
+    eventViewed: 0,
+    reminderCreated: 0,
+    calendarNavigated: 0,
   },
   retention: {
-    day1Percent: 58.4,
-    day7Percent: 34.2,
-    day30Percent: 21.0,
+    day1Percent: 0,
+    day7Percent: 0,
+    day30Percent: 0,
   },
 };
 

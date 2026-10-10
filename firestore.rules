@@ -2,117 +2,322 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
+    // =========================================================================
+    // HELPER FUNCTIONS
+    // =========================================================================
+
+    // Verify if requesting client is authenticated
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Admin authorization: requires admin custom claim (or verified admin email for root administrator)
+    // Verify if requesting client matches the target user ID
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Verify admin role strictly via server-assigned cryptographic custom claim.
+    // NO EMAIL FALLBACKS PERMITTED.
     function isAdmin() {
-      return isAuthenticated() && (
-        request.auth.token.admin == true ||
-        (
-          request.auth.token.email != null &&
-          request.auth.token.email in [
-            'admin@7tasker.com',
-            'joyfuldays.admin@7tasker.com',
-            'support@7tasker.com'
-          ] &&
-          (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com')
-        )
-      );
+      return isAuthenticated() && request.auth.token.admin == true;
     }
 
-    // 1. Settings Collection
-    // Public read-only access ONLY for exact configurations required by Android APK:
-    // - settings/gifting (isGiftingEnabled toggle)
-    // - settings/app_config (fallback app features)
-    // - settings/review_reminders & settings/review_reminder_config (trigger thresholds)
-    // - settings/admob & settings/ad_units (ad unit IDs)
-    // Client writes strictly blocked for unauthenticated clients, Android app, and ordinary users.
-    // Writes permitted ONLY for authorized admin sessions (via admin claim or verified cryptographic authorization proof).
+    // Checks if the authenticated user matches ALL present owner/creator identifiers on an event document.
+    // If conflicting UIDs exist across present owner fields, access is DENIED to prevent ambiguity.
+    function isEventOwner(data) {
+      return isAuthenticated() &&
+        hasAnyOwnerField(data) &&
+        (!('createdBy' in data) || data.createdBy == request.auth.uid) &&
+        (!('hostUid' in data) || data.hostUid == request.auth.uid) &&
+        (!('userId' in data) || data.userId == request.auth.uid) &&
+        (!('ownerUid' in data) || data.ownerUid == request.auth.uid) &&
+        (!('creatorUid' in data) || data.creatorUid == request.auth.uid) &&
+        (!('user_id' in data) || data.user_id == request.auth.uid) &&
+        (!('host_id' in data) || data.host_id == request.auth.uid);
+    }
+
+    // Validates that if any owner identifier is provided on event creation, it MUST match request.auth.uid.
+    // At least one owner field must be specified.
+    function isValidNewEventOwnership() {
+      return isAuthenticated() &&
+        hasAnyOwnerField(request.resource.data) &&
+        (!('createdBy' in request.resource.data) || request.resource.data.createdBy == request.auth.uid) &&
+        (!('hostUid' in request.resource.data) || request.resource.data.hostUid == request.auth.uid) &&
+        (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&
+        (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == request.auth.uid) &&
+        (!('creatorUid' in request.resource.data) || request.resource.data.creatorUid == request.auth.uid) &&
+        (!('user_id' in request.resource.data) || request.resource.data.user_id == request.auth.uid) &&
+        (!('host_id' in request.resource.data) || request.resource.data.host_id == request.auth.uid);
+    }
+
+    // Checks whether an event document has ANY owner identifier field present
+    function hasAnyOwnerField(data) {
+      return ('createdBy' in data) ||
+        ('hostUid' in data) ||
+        ('userId' in data) ||
+        ('ownerUid' in data) ||
+        ('creatorUid' in data) ||
+        ('user_id' in data) ||
+        ('host_id' in data);
+    }
+
+    // Comprehensive list of server-controlled entitlement, payment, and privilege keys
+    function isProtectedKey(key) {
+      return key in [
+        'isAdsRemoved',
+        'remove_ads_lifetime',
+        'removeAdsProvider',
+        'removeAdsStripeSessionId',
+        'transactionId',
+        'paymentIntentId',
+        'amountPaid',
+        'currency',
+        'purchasedAt',
+        'stripeCustomerId',
+        'role',
+        'purchases',
+        'entitlements',
+        'subscriptionStatus',
+        'adsRemovedAt',
+        'paymentHistory'
+      ];
+    }
+
+    // Ensures no protected entitlement/payment field is added during document creation
+    function hasNoProtectedFieldsOnCreate() {
+      let keys = request.resource.data.keys();
+      return !keys.hasAny([
+        'isAdsRemoved',
+        'remove_ads_lifetime',
+        'removeAdsProvider',
+        'removeAdsStripeSessionId',
+        'transactionId',
+        'paymentIntentId',
+        'amountPaid',
+        'currency',
+        'purchasedAt',
+        'stripeCustomerId',
+        'role',
+        'purchases',
+        'entitlements',
+        'subscriptionStatus',
+        'adsRemovedAt',
+        'paymentHistory'
+      ]);
+    }
+
+    // Ensures no protected entitlement/payment field is altered during document update
+    function protectedFieldsUnchanged() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return !affectedKeys.hasAny([
+        'isAdsRemoved',
+        'remove_ads_lifetime',
+        'removeAdsProvider',
+        'removeAdsStripeSessionId',
+        'transactionId',
+        'paymentIntentId',
+        'amountPaid',
+        'currency',
+        'purchasedAt',
+        'stripeCustomerId',
+        'role',
+        'purchases',
+        'entitlements',
+        'subscriptionStatus',
+        'adsRemovedAt',
+        'paymentHistory'
+      ]);
+    }
+
+    // Ensures immutable event ownership fields cannot be altered, added, or deleted after creation
+    function eventOwnershipUnchanged() {
+      return ('createdBy' in request.resource.data == 'createdBy' in resource.data) &&
+             (!('createdBy' in resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&
+             ('hostUid' in request.resource.data == 'hostUid' in resource.data) &&
+             (!('hostUid' in resource.data) || request.resource.data.hostUid == resource.data.hostUid) &&
+             ('ownerUid' in request.resource.data == 'ownerUid' in resource.data) &&
+             (!('ownerUid' in resource.data) || request.resource.data.ownerUid == resource.data.ownerUid) &&
+             ('creatorUid' in request.resource.data == 'creatorUid' in resource.data) &&
+             (!('creatorUid' in resource.data) || request.resource.data.creatorUid == resource.data.creatorUid) &&
+             ('host_id' in request.resource.data == 'host_id' in resource.data) &&
+             (!('host_id' in resource.data) || request.resource.data.host_id == resource.data.host_id);
+    }
+
+    function eventUserUnchanged() {
+      return ('userId' in request.resource.data == 'userId' in resource.data) &&
+             (!('userId' in resource.data) || request.resource.data.userId == resource.data.userId) &&
+             ('user_id' in request.resource.data == 'user_id' in resource.data) &&
+             (!('user_id' in resource.data) || request.resource.data.user_id == resource.data.user_id);
+    }
+
+    // =========================================================================
+    // 1. USER PROFILES, PREFERENCES & SUBCOLLECTIONS
+    // =========================================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Separate Create and Update permissions
+      allow create: if isOwner(userId) && hasNoProtectedFieldsOnCreate();
+      allow update: if (isOwner(userId) && protectedFieldsUnchanged()) || isAdmin();
+      allow delete: if isAdmin();
+
+      // Explicit rules for users/{userId}/settings/preferences
+      match /settings/preferences {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && hasNoProtectedFieldsOnCreate();
+        allow update: if (isOwner(userId) && protectedFieldsUnchanged()) || isAdmin();
+        allow delete: if isAdmin();
+      }
+
+      // Explicit rules for users/{userId}/events/{eventId} (FULL CRUD FOR USER)
+      match /events/{eventId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update: if (isOwner(userId) && eventOwnershipUnchanged() && eventUserUnchanged()) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      // Explicit fallback for other subcollections under users/{userId}
+      match /{subcollection=**} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isAdmin();
+      }
+    }
+
+    // =========================================================================
+    // 2. SYSTEM SETTINGS & CONFIGURATION (Public Read, Admin Write Only)
+    // =========================================================================
+
     match /settings/{settingId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // 2. Auxiliary App Config collections
     match /app_config/{configId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
     match /system_config/{configId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdmin();
     }
 
-    // 3. AdMob Campaigns & Ad Units
     match /admob_campaigns/{campaignId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
 
-    // 4. Financial Payouts, Payouts & Escrow
-    match /financial_payouts/{payoutId} {
-      allow read, write: if true;
-    }
+    // =========================================================================
+    // 3. CELEBRATIONS & EVENTS (Ownership & Privacy Enforcement)
+    // =========================================================================
 
-    match /payouts/{payoutId} {
-      allow read, write: if true;
-    }
-
-    // 5. Celebrations & Events
     match /celebrations/{celebrationId} {
-      allow read, write: if true;
+      allow read: if resource.data.isPublic == true ||
+                     isEventOwner(resource.data) ||
+                     !hasAnyOwnerField(resource.data) ||
+                     isAdmin();
+      allow create: if isValidNewEventOwnership();
+      allow update: if isAdmin() || (
+        isEventOwner(resource.data) && 
+        eventOwnershipUnchanged() &&
+        eventUserUnchanged()
+      );
+      allow delete: if isAdmin() || isEventOwner(resource.data);
     }
 
     match /events/{eventId} {
-      allow read, write: if true;
+      allow read: if resource.data.isPublic == true ||
+                     isEventOwner(resource.data) ||
+                     !hasAnyOwnerField(resource.data) ||
+                     isAdmin();
+      allow create: if isValidNewEventOwnership();
+      allow update: if isAdmin() || (
+        isEventOwner(resource.data) && 
+        eventOwnershipUnchanged() &&
+        eventUserUnchanged()
+      );
+      allow delete: if isAdmin() || isEventOwner(resource.data);
     }
 
     match /celebration_events/{eventId} {
-      allow read, write: if true;
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
     }
 
     match /user_events/{eventId} {
-      allow read, write: if true;
+      allow read: if isEventOwner(resource.data) || !hasAnyOwnerField(resource.data) || isAdmin();
+      allow create: if isValidNewEventOwnership();
+      allow update: if isAdmin() || (
+        isEventOwner(resource.data) && 
+        eventOwnershipUnchanged() &&
+        eventUserUnchanged()
+      );
+      allow delete: if isAdmin() || isEventOwner(resource.data);
     }
 
-    // 6. User Reviews & Feedback
+    // =========================================================================
+    // 4. REVIEWS & FEEDBACK
+    // =========================================================================
+
     match /reviews/{reviewId} {
-      allow read, write: if true;
+      allow read: if resource.data.status == 'APPROVED' || 
+                     (isAuthenticated() && resource.data.userId == request.auth.uid) || 
+                     isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
     match /user_reviews/{reviewId} {
-      allow read, write: if true;
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
-    // 7. Review triggers & reminder lifecycle
     match /user_review_triggers/{userId} {
-      allow read, write: if true;
+      allow read, write: if isOwner(userId) || isAdmin();
     }
 
     match /user_review_reminders/{userId} {
-      allow read, write: if true;
+      allow read, write: if isOwner(userId) || isAdmin();
     }
 
-    // 8. User profiles & subcollections (preferences, etc.)
-    match /users/{userId}/{document=**} {
-      allow read, write: if true;
+    // =========================================================================
+    // 5. FINANCIAL LEDGERS, WEBHOOKS, TELEMETRY & PUSH TRIGGERS
+    // =========================================================================
+
+    match /analytics/{document=**} {
+      allow read: if isAdmin();
+      allow write: if false; // Server Admin SDK Only
     }
 
-    // 9. Audit logs & Push Triggers
+    match /processed_stripe_events/{eventId} {
+      allow read: if isAdmin();
+      allow write: if false; // Server Admin SDK Only
+    }
+
+    match /financial_payouts/{payoutId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /payouts/{payoutId} {
+      allow read, write: if isAdmin();
+    }
+
     match /audit_logs/{logId} {
-      allow read, write: if true;
+      allow read: if isAdmin();
+      allow write: if false; // Server Admin SDK Only
     }
 
     match /user_push_triggers/{userId} {
-      allow read, write: if true;
+      allow read, write: if isOwner(userId) || isAdmin();
     }
 
-    // 10. Analytics Collections & Subcollections
-    match /analytics/{document=**} {
-      allow read, write: if true;
-    }
+    // =========================================================================
+    // 6. DEFAULT DENY
+    // =========================================================================
 
-    // 11. Default catch-all: DENY ALL UNMATCHED PATHS
     match /{document=**} {
       allow read, write: if false;
     }

@@ -902,24 +902,6 @@ export const AdMobModule: React.FC = () => {
         </div>
       )}
 
-      {/* 3. ANALYTICS & TELEMETRY PANEL */}
-      {activeTab === 'analytics' && (
-        <AdMobAnalyticsPanel
-          engagement={engagementAnalytics}
-          adMetrics={adEventMetrics}
-          adsEnabled={admobSettings.adsEnabled}
-        />
-      )}
-
-      {/* 4. ANDROID SAFETY & EVENT CONTRACT PANEL */}
-      {activeTab === 'safety-contract' && (
-        <AndroidSafetyContractPanel />
-      )}
-
-      {/* 5. AUDIT LOG PANEL */}
-      {activeTab === 'audit-log' && (
-        <AdMobAuditLogPanel logs={auditLogs} />
-      )}
 
       {/* ================= ADMOB CREDENTIALS & API KEYS MODAL ================= */}
       {isEditingCreds && (

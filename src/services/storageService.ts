@@ -89,6 +89,8 @@ const STORAGE_KEYS = {
 (function purgeLegacyTestData() {
   try {
     if (!localStorage.getItem(STORAGE_KEYS.PURGE_FLAG)) {
+      localStorage.removeItem(STORAGE_KEYS.ENGAGEMENT_ANALYTICS);
+      localStorage.removeItem(STORAGE_KEYS.AD_EVENT_METRICS);
       localStorage.removeItem(STORAGE_KEYS.USERS);
       localStorage.removeItem(STORAGE_KEYS.CELEBRATIONS);
       localStorage.removeItem(STORAGE_KEYS.TEST_TRANSACTIONS);
