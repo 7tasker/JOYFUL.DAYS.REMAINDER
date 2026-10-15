@@ -165,7 +165,8 @@ export const StorageService = {
 
   isAuthorizedAdmin(email: string): boolean {
     if (!email) return false;
-    return email.trim().toLowerCase() === 'admin@7tasker.com';
+    const clean = email.trim().toLowerCase();
+    return clean === 'admin@7tasker.com' || clean === 'joyfuldays.admin@7tasker.com' || clean === 'support@7tasker.com';
   },
 
   // 2FA Security & Cryptographic Config

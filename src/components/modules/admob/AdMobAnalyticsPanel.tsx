@@ -121,7 +121,7 @@ export const AdMobAnalyticsPanel: React.FC<AdMobAnalyticsPanelProps> = ({
       setIsLiveCalculated(true);
     };
 
-    // 1. Subscribe to firestoreSync Users
+    // 1. Subscribe to firestoreSync live canonical Users
     const unsubSyncUsers = firestoreSync.subscribeUsers((liveUsers: UserAccount[]) => {
       liveUsers.forEach((u) => {
         const lastActiveTime = u.lastActive ? new Date(u.lastActive).getTime() : now;
@@ -130,43 +130,6 @@ export const AdMobAnalyticsPanel: React.FC<AdMobAnalyticsPanelProps> = ({
       });
       recalculateUserTelemetry();
     });
-
-    // 2. Subscribe to analytics/monetization_stats/users
-    const unsubMonetization = onSnapshot(
-      collection(db, 'analytics/monetization_stats/users'),
-      (snap) => {
-        snap.forEach((docSnap) => {
-          const d = docSnap.data();
-          const uid = d.uid || docSnap.id;
-          const lastActiveStr = d.lastUpdatedAt || d.unlockedAt;
-          const createdStr = d.unlockedAt || d.lastUpdatedAt;
-
-          let lastActiveTime = now;
-          if (lastActiveStr) {
-            lastActiveTime =
-              typeof lastActiveStr === 'string'
-                ? new Date(lastActiveStr).getTime()
-                : lastActiveStr.seconds
-                ? lastActiveStr.seconds * 1000
-                : now;
-          }
-
-          let createdTime = lastActiveTime;
-          if (createdStr) {
-            createdTime =
-              typeof createdStr === 'string'
-                ? new Date(createdStr).getTime()
-                : createdStr.seconds
-                ? createdStr.seconds * 1000
-                : lastActiveTime;
-          }
-
-          userMap.set(uid, { createdTime, lastActiveTime });
-        });
-        recalculateUserTelemetry();
-      },
-      (err) => console.warn('[Analytics Users] Snapshot notice:', err?.message)
-    );
 
     // 3. Subscribe to firestoreSync Celebrations
     const unsubSyncCelebrations = firestoreSync.subscribeCelebrations((liveCelebrations: CelebrationEvent[]) => {
@@ -230,7 +193,6 @@ export const AdMobAnalyticsPanel: React.FC<AdMobAnalyticsPanelProps> = ({
 
     return () => {
       if (unsubSyncUsers) unsubSyncUsers();
-      if (unsubMonetization) unsubMonetization();
       if (unsubSyncCelebrations) unsubSyncCelebrations();
       if (unsubAdMetrics) unsubAdMetrics();
     };

@@ -17,7 +17,7 @@ import {
   serverTimestamp,
   type Firestore,
 } from './firebase';
-import { UserAccount, CelebrationEvent, AdMobCredentials, AdUnitConfig, AppFeatureConfig, ReviewReminderConfig, UserReview, UserWithReviewDetails, AdMobSettingsConfig } from '../types';
+import { UserAccount, CanonicalUserDashboardRecord, CelebrationEvent, AdMobCredentials, AdUnitConfig, AppFeatureConfig, ReviewReminderConfig, UserReview, UserWithReviewDetails, AdMobSettingsConfig } from '../types';
 import { StorageService } from './storageService';
 import { AdminSessionService, ADMIN_AUTH_SIGNATURE } from './adminSessionService';
 
@@ -140,6 +140,9 @@ function normalizeCelebrationDoc(id: string, data: any, sourceDb: string, collec
     schemaVersion: typeof data.schemaVersion === 'number' ? data.schemaVersion : undefined,
     createdAt: typeof data.createdAt === 'string' ? data.createdAt : (data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : undefined),
     // Additional mapping from provided Android payload
+    personName: data.personName,
+    dateIso: data.dateIso || eventDate,
+    userId: data.userId || data.hostUid || data.host_uid || data.ownerUid || data.creatorUid || undefined,
     daysAway: data.daysAway,
     isToday: data.isToday,
     isRecurring: data.isRecurring,
@@ -159,22 +162,261 @@ function normalizeCelebrationDoc(id: string, data: any, sourceDb: string, collec
   };
 }
 
-// Normalizes document from users collection
-function normalizeUserDoc(id: string, data: any): UserAccount {
+const ISO_COUNTRY_CODES: Record<string, string> = {
+  AF: 'Afghanistan', AL: 'Albania', DZ: 'Algeria', AS: 'American Samoa', AD: 'Andorra',
+  AO: 'Angola', AI: 'Anguilla', AQ: 'Antarctica', AG: 'Antigua and Barbuda', AR: 'Argentina', AM: 'Armenia',
+  AW: 'Aruba', AU: 'Australia', AT: 'Austria', AZ: 'Azerbaijan', BS: 'Bahamas', BH: 'Bahrain', BD: 'Bangladesh',
+  BB: 'Barbados', BY: 'Belarus', BE: 'Belgium', BZ: 'Belize', BJ: 'Benin', BM: 'Bermuda', BT: 'Bhutan',
+  BO: 'Bolivia', BA: 'Bosnia and Herzegovina', BW: 'Botswana', BR: 'Brazil', BN: 'Brunei', BG: 'Bulgaria',
+  BF: 'Burkina Faso', BI: 'Burundi', KH: 'Cambodia', CM: 'Cameroon', CA: 'Canada', CV: 'Cape Verde',
+  KY: 'Cayman Islands', CF: 'Central African Republic', TD: 'Chad', CL: 'Chile', CN: 'China', CO: 'Colombia',
+  KM: 'Comoros', CG: 'Congo', CD: 'Congo (DRC)', CR: 'Costa Rica', HR: 'Croatia', CU: 'Cuba',
+  CY: 'Cyprus', CZ: 'Czech Republic', DK: 'Denmark', DJ: 'Djibouti', DM: 'Dominica', DO: 'Dominican Republic',
+  EC: 'Ecuador', EG: 'Egypt', SV: 'El Salvador', GQ: 'Equatorial Guinea', ER: 'Eritrea', EE: 'Estonia',
+  ET: 'Ethiopia', FJ: 'Fiji', FI: 'Finland', FR: 'France', GA: 'Gabon', GM: 'Gambia', GE: 'Georgia',
+  DE: 'Germany', GH: 'Ghana', GI: 'Gibraltar', GR: 'Greece', GL: 'Greenland', GD: 'Grenada', GU: 'Guam',
+  GT: 'Guatemala', GN: 'Guinea', GW: 'Guinea-Bissau', GY: 'Guyana', HT: 'Haiti', HN: 'Honduras',
+  HK: 'Hong Kong', HU: 'Hungary', IS: 'Iceland', IN: 'India', ID: 'Indonesia', IR: 'Iran', IQ: 'Iraq',
+  IE: 'Ireland', IL: 'Israel', IT: 'Italy', JM: 'Jamaica', JP: 'Japan', JO: 'Jordan', KZ: 'Kazakhstan',
+  KE: 'Kenya', KI: 'Kiribati', KW: 'Kuwait', KG: 'Kyrgyzstan', LA: 'Laos', LV: 'Latvia', LB: 'Lebanon',
+  LS: 'Lesotho', LR: 'Liberia', LY: 'Libya', LI: 'Liechtenstein', LT: 'Lithuania', LU: 'Luxembourg',
+  MO: 'Macau', MK: 'North Macedonia', MG: 'Madagascar', MW: 'Malawi', MY: 'Malaysia', MV: 'Maldives',
+  ML: 'Mali', MT: 'Malta', MH: 'Marshall Islands', MQ: 'Martinique', MR: 'Mauritania', MU: 'Mauritius',
+  MX: 'Mexico', FM: 'Micronesia', MD: 'Moldova', MC: 'Monaco', MN: 'Mongolia', ME: 'Montenegro',
+  MA: 'Morocco', MZ: 'Mozambique', MM: 'Myanmar', NA: 'Namibia', NR: 'Nauru', NP: 'Nepal', NL: 'Netherlands',
+  NC: 'New Caledonia', NZ: 'New Zealand', NI: 'Nicaragua', NE: 'Niger', NG: 'Nigeria', KP: 'North Korea',
+  NO: 'Norway', OM: 'Oman', PK: 'Pakistan', PW: 'Palau', PS: 'Palestine', PA: 'Panama', PG: 'Papua New Guinea',
+  PY: 'Paraguay', PE: 'Peru', PH: 'Philippines', PL: 'Poland', PT: 'Portugal', PR: 'Puerto Rico', QA: 'Qatar',
+  RO: 'Romania', RU: 'Russia', RW: 'Rwanda', SA: 'Saudi Arabia', SN: 'Senegal', RS: 'Serbia',
+  SC: 'Seychelles', SL: 'Sierra Leone', SG: 'Singapore', SK: 'Slovakia', SI: 'Slovenia', SB: 'Solomon Islands',
+  SO: 'Somalia', ZA: 'South Africa', KR: 'South Korea', SS: 'South Sudan', ES: 'Spain', LK: 'Sri Lanka',
+  SD: 'Sudan', SR: 'Suriname', SE: 'Sweden', CH: 'Switzerland', SY: 'Syria', TW: 'Taiwan', TJ: 'Tajikistan',
+  TZ: 'Tanzania', TH: 'Thailand', TL: 'Timor-Leste', TG: 'Togo', TO: 'Tonga', TT: 'Trinidad and Tobago',
+  TN: 'Tunisia', TR: 'Turkey', TM: 'Turkmenistan', TV: 'Tuvalu', UG: 'Uganda', UA: 'Ukraine',
+  AE: 'United Arab Emirates', GB: 'United Kingdom', US: 'United States', UY: 'Uruguay', UZ: 'Uzbekistan',
+  VU: 'Vanuatu', VA: 'Vatican City', VE: 'Venezuela', VN: 'Vietnam', YE: 'Yemen', ZM: 'Zambia', ZW: 'Zimbabwe'
+};
+
+function normalizeUserLocation(data: any, preferencesData?: any): { country: string; countryCode?: string; stateCode?: string; state?: string } {
+  const prefs = preferencesData || data.settings?.preferences || data.preferences || {};
+
+  // Primary: countryCode, stateCode
+  const countryCode = (data.countryCode || data.country_code || prefs.countryCode || prefs.country_code || '').toString().trim().toUpperCase();
+  const stateCode = (data.stateCode || data.state_code || prefs.stateCode || prefs.state_code || '').toString().trim();
+
+  // Fallback: country, state
+  const rawCountry = (data.country || prefs.country || '').toString().trim();
+  const rawState = (data.state || prefs.state || '').toString().trim();
+
+  // Legacy fallback: preferences.publicHolidayCountry / publicHolidayRegion
+  const legacyCountry = (prefs.publicHolidayCountry || data.publicHolidayCountry || '').toString().trim();
+  const legacyState = (prefs.publicHolidayRegion || data.publicHolidayRegion || '').toString().trim();
+
+  let code = countryCode || (rawCountry.length === 2 ? rawCountry.toUpperCase() : '') || (legacyCountry.length === 2 ? legacyCountry.toUpperCase() : '');
+  let countryName = '';
+
+  if (code && ISO_COUNTRY_CODES[code]) {
+    countryName = ISO_COUNTRY_CODES[code];
+  } else if (rawCountry) {
+    const upperRaw = rawCountry.toUpperCase();
+    countryName = ISO_COUNTRY_CODES[upperRaw] || rawCountry;
+  } else if (legacyCountry) {
+    const upperLegacy = legacyCountry.toUpperCase();
+    countryName = ISO_COUNTRY_CODES[upperLegacy] || legacyCountry;
+  } else if (code) {
+    countryName = code;
+  } else {
+    // Show Unknown only when no valid value exists
+    countryName = 'Unknown';
+  }
+
+  const stateName = rawState || stateCode || legacyState || undefined;
+
   return {
-    id: data.uid || id,
-    name: data.displayName || data.name || data.userName || data.fullName || 'JoyfulDays User',
-    email: data.email || data.userEmail || `${id}@user.joyfuldays.com`,
-    avatar: data.photoUrl || data.avatar || data.photoURL || data.profileImage || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80`,
-    country: data.country || 'United States',
-    loyaltyTier: (data.loyaltyTier || 'Standard') as UserAccount['loyaltyTier'],
+    country: countryName,
+    countryCode: code || undefined,
+    stateCode: stateCode || undefined,
+    state: stateName,
+  };
+}
+
+// Normalizes document from users collection and subcollections into CanonicalUserDashboardRecord
+function normalizeUserDoc(id: string, rawData?: any, preferencesData?: any, analyticsData?: any): CanonicalUserDashboardRecord {
+  const data = rawData || {};
+  const prefs = preferencesData || data.settings?.preferences || data.preferences || {};
+  const loc = normalizeUserLocation(data, preferencesData);
+
+  const uid = data.uid || prefs.uid || analyticsData?.uid || id;
+  const name = data.displayName || data.name || data.userName || data.fullName || prefs.displayName || analyticsData?.userName || 'JoyfulDays User';
+  const email = data.email || data.userEmail || prefs.email || prefs.userEmail || analyticsData?.userEmail || `${uid}@user.joyfuldays.com`;
+  const avatar = data.photoUrl || data.avatar || data.photoURL || data.profileImage || `https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80`;
+  const status = (data.status || 'active') as CanonicalUserDashboardRecord['status'];
+  const isGoogleUser = data.isGoogleUser !== undefined ? Boolean(data.isGoogleUser) : undefined;
+
+  // Authoritative PRO Entitlement
+  const isAuthoritativePro = Boolean(
+    prefs.remove_ads_lifetime === true ||
+    prefs.removeAdsLifetime === true ||
+    prefs.proStatus === 'PRO' ||
+    prefs.isPro === true ||
+    data.proStatus === 'PRO' ||
+    data.removeAdsLifetime === true ||
+    data.isPro === true ||
+    data.entitlements?.remove_ads_lifetime === true ||
+    data.entitlements?.removeAdsLifetime === true
+  );
+
+  // Check if analytics claims PRO / Remove Ads
+  const analyticsClaimsPro = Boolean(
+    analyticsData?.removeAdsLifetime === true ||
+    (analyticsData?.isUnlocked === true && (analyticsData?.amountPaid || analyticsData?.amountFormatted || analyticsData?.transactionId))
+  );
+
+  let isPro = false;
+  let hasProDiscrepancy = false;
+  let proDiscrepancyNote: string | undefined = undefined;
+
+  if (isAuthoritativePro) {
+    isPro = true;
+  } else if (analyticsClaimsPro) {
+    isPro = false; // Authoritative rule: missing trusted entitlement means NO_PRO
+    hasProDiscrepancy = true;
+    proDiscrepancyNote = `Historical Analytics PRO claim (${analyticsData?.amountFormatted || '$1.00 USD'}) — verification required`;
+  } else {
+    isPro = false;
+  }
+
+  // Payment evidence
+  const transactionId = prefs.transactionId || prefs.removeAdsStripeSessionId || data.transactionId || data.removeAdsStripeSessionId || analyticsData?.transactionId || undefined;
+  const paymentIntentId = prefs.paymentIntentId || data.paymentIntentId || analyticsData?.paymentIntentId || undefined;
+  const stripeSessionId = prefs.removeAdsStripeSessionId || prefs.transactionId || data.removeAdsStripeSessionId || data.transactionId || undefined;
+  const rawAmountPaid = prefs.amountPaid !== undefined ? prefs.amountPaid : (data.amountPaid !== undefined ? data.amountPaid : analyticsData?.amountPaid);
+  const rawAmountFormatted = prefs.amountFormatted || data.amountFormatted || analyticsData?.amountFormatted || undefined;
+  const currency = (prefs.currency || data.currency || analyticsData?.currency || 'USD').toString().toUpperCase();
+  const purchasedAt = prefs.purchasedAt || prefs.removeAdsPurchasedAt || data.purchasedAt || data.removeAdsPurchasedAt || analyticsData?.purchasedAt || undefined;
+
+  const hasRecordedPayment = Boolean(
+    transactionId || paymentIntentId || stripeSessionId || (typeof rawAmountPaid === 'number' && rawAmountPaid > 0) || rawAmountFormatted
+  );
+
+  let formattedAmountString: string | undefined = undefined;
+  if (rawAmountFormatted && typeof rawAmountFormatted === 'string') {
+    formattedAmountString = rawAmountFormatted;
+  } else if (typeof rawAmountPaid === 'number' && !isNaN(rawAmountPaid)) {
+    if (rawAmountPaid >= 100 && Number.isInteger(rawAmountPaid)) {
+      formattedAmountString = `$${(rawAmountPaid / 100).toFixed(2)} ${currency}`;
+    } else {
+      formattedAmountString = `$${rawAmountPaid.toFixed(2)} ${currency}`;
+    }
+  }
+
+  const isTrustedStripeVerified = Boolean(
+    (prefs.removeAdsProvider === 'stripe' || data.removeAdsProvider === 'stripe' || data.stripeVerified === true) &&
+    (transactionId || paymentIntentId || (typeof rawAmountPaid === 'number' && rawAmountPaid > 0))
+  );
+
+  let verificationStatus: 'Payment Verified' | 'Evidence recorded — unverified' | 'No payment recorded' = 'No payment recorded';
+  if (isTrustedStripeVerified) {
+    verificationStatus = 'Payment Verified';
+  } else if (hasRecordedPayment) {
+    verificationStatus = 'Evidence recorded — unverified';
+  } else {
+    verificationStatus = 'No payment recorded';
+  }
+
+  const paymentEvidence = {
+    hasRecordedPayment,
+    verificationStatus,
+    amountPaid: typeof rawAmountPaid === 'number' ? rawAmountPaid : undefined,
+    amountFormatted: formattedAmountString,
+    currency,
+    transactionId,
+    paymentIntentId,
+    stripeSessionId,
+    purchasedAt,
+    paymentSource: isTrustedStripeVerified ? 'Stripe Webhook' : (hasRecordedPayment ? 'Unverified Log' : 'None'),
+  };
+
+  // Advanced Features & Rewarded Ads
+  const rewardAdsRequired = Number(
+    prefs.rewardAdsRequired ??
+    data.rewardAdsRequired ??
+    3
+  );
+
+  const prefsAdsWatched = prefs.advancedFeaturesRewardAdsWatched !== undefined
+    ? Number(prefs.advancedFeaturesRewardAdsWatched)
+    : (prefs.rewardAdsWatched !== undefined ? Number(prefs.rewardAdsWatched) : undefined);
+
+  const prefsUnlocked = prefs.advancedFeaturesUnlocked !== undefined
+    ? Boolean(prefs.advancedFeaturesUnlocked)
+    : undefined;
+
+  const analyticsAdsWatched = analyticsData?.adsWatchedCount !== undefined ? Number(analyticsData.adsWatchedCount) : undefined;
+  const analyticsUnlocked = analyticsData?.isUnlocked !== undefined ? Boolean(analyticsData.isUnlocked) : undefined;
+
+  let canonicalAdsWatched = 0;
+  let canonicalUnlocked = false;
+
+  if (prefsAdsWatched !== undefined || prefsUnlocked !== undefined) {
+    canonicalAdsWatched = prefsAdsWatched ?? 0;
+    canonicalUnlocked = prefsUnlocked ?? (canonicalAdsWatched >= rewardAdsRequired);
+  } else if (analyticsAdsWatched !== undefined || analyticsUnlocked !== undefined) {
+    canonicalAdsWatched = analyticsAdsWatched ?? 0;
+    canonicalUnlocked = analyticsUnlocked ?? (canonicalAdsWatched >= rewardAdsRequired);
+  }
+
+  let hasAdDiscrepancy = false;
+  let adDiscrepancyNote: string | undefined = undefined;
+
+  if (prefsAdsWatched !== undefined && analyticsAdsWatched !== undefined && prefsAdsWatched !== analyticsAdsWatched) {
+    hasAdDiscrepancy = true;
+    adDiscrepancyNote = `Analytics shows ${analyticsAdsWatched}/3 ads, but Preferences records ${prefsAdsWatched}/3 (Reconciliation needed)`;
+  } else if (prefsUnlocked === false && analyticsUnlocked === true) {
+    hasAdDiscrepancy = true;
+    adDiscrepancyNote = `Analytics shows 3/3 ads watched, but Preferences remains Locked (Reconciliation needed)`;
+  }
+
+  const advancedFeatures = {
+    unlocked: canonicalUnlocked,
+    adsWatched: canonicalAdsWatched,
+    rewardAdsRequired,
+    hasAdDiscrepancy,
+    adDiscrepancyNote,
+    analyticsAdsWatched,
+    analyticsUnlocked,
+  };
+
+  return {
+    id: uid,
+    uid,
+    name,
+    email,
+    avatar,
+    country: loc.country,
+    countryCode: loc.countryCode,
+    stateCode: loc.stateCode,
+    state: loc.state,
+    isPro,
+    proStatus: isPro ? 'PRO' : 'NO_PRO',
+    entitlements: {
+      remove_ads_lifetime: isPro,
+    },
+    hasProDiscrepancy,
+    proDiscrepancyNote,
+    paymentEvidence,
+    advancedFeatures,
+    loyaltyTier: (data.loyaltyTier || 'Standard') as CanonicalUserDashboardRecord['loyaltyTier'],
     celebrationsHosted: Number(data.celebrationsHosted ?? data.eventsCount ?? data.hostedCount ?? 0),
     giftsSentCount: Number(data.giftsSentCount ?? data.sentGifts ?? data.giftsCount ?? 0),
     totalGiftsVolume: Number(data.totalGiftsVolume ?? data.totalGiftVolume ?? data.giftVolume ?? 0),
-    status: (data.status || 'active') as UserAccount['status'],
+    status,
     joinedDate: data.joinedDate || data.createdAt || new Date().toISOString().substring(0, 10),
     lastActive: data.lastSignInAt ? new Date(data.lastSignInAt).toISOString().replace('T', ' ').substring(0, 16) : (data.lastActive || new Date().toISOString().replace('T', ' ').substring(0, 16)),
-    isGoogleUser: data.isGoogleUser !== undefined ? Boolean(data.isGoogleUser) : undefined,
+    isGoogleUser,
+    androidEventsCount: 0,
+    legacyCelebrationsCount: Number(data.celebrationsHosted ?? 0),
+    analyticsData,
   };
 }
 
@@ -184,6 +426,7 @@ class FirestoreSyncService {
   private statusListeners: ((status: FirestoreConnectionStatus, count: number) => void)[] = [];
   private liveUsersCount = 0;
   private liveEventsCount = 0;
+  private activeEventsPathMap = new Map<string, { event: CelebrationEvent; path: string; collection: string }>();
   private diagnosticInfo: SyncDiagnosticInfo = {
     primaryDbConnected: false,
     defaultDbConnected: false,
@@ -279,6 +522,8 @@ class FirestoreSyncService {
     ];
 
     dbInstances.forEach(({ name: dbName, instance }) => {
+      // 1. Root collections
+      const targetCollections = ['events', 'celebrations'];
       targetCollections.forEach((colName) => {
         try {
           const colRef = collection(instance, colName);
@@ -288,10 +533,13 @@ class FirestoreSyncService {
               detectedColsSet.add(`${colName} [${dbName}]`);
               snapshot.docs.forEach((docSnap) => {
                 const data = docSnap.data();
+                const docPath = docSnap.ref.path;
                 const event = normalizeCelebrationDoc(docSnap.id, data, dbName, colName);
-                eventsMap.set(docSnap.id, event);
-                rawSamplesMap.set(docSnap.id, {
+                eventsMap.set(docPath, event);
+                this.activeEventsPathMap.set(docPath, { event, path: docPath, collection: colName });
+                rawSamplesMap.set(docPath, {
                   id: docSnap.id,
+                  path: docPath,
                   collection: colName,
                   dbInstance: dbName,
                   title: event.title,
@@ -301,8 +549,9 @@ class FirestoreSyncService {
               // Handle removed docs
               snapshot.docChanges().forEach((change) => {
                 if (change.type === 'removed') {
-                  eventsMap.delete(change.doc.id);
-                  rawSamplesMap.delete(change.doc.id);
+                  eventsMap.delete(change.doc.ref.path);
+                  this.activeEventsPathMap.delete(change.doc.ref.path);
+                  rawSamplesMap.delete(change.doc.ref.path);
                 }
               });
               emitMergedEvents();
@@ -314,6 +563,60 @@ class FirestoreSyncService {
           unsubscribers.push(unsub);
         } catch (err) {
           console.info(`[Firestore] Setup listener notice for ${colName}:`, err);
+        }
+      });
+
+      // 2. Collection Groups for User Subcollections (e.g. users/{uid}/celebrations and users/{uid}/custom_holidays)
+      const groupCols = ['celebrations', 'custom_holidays', 'events'];
+      groupCols.forEach((groupName) => {
+        try {
+          const groupRef = collectionGroup(instance, groupName);
+          const unsub = onSnapshot(
+            groupRef,
+            (snapshot) => {
+              detectedColsSet.add(`group:${groupName} [${dbName}]`);
+              snapshot.docs.forEach((docSnap) => {
+                const data = docSnap.data();
+                const docPath = docSnap.ref.path;
+                // Extract hostUid from path if path is users/{uid}/events/{id} or users/{uid}/celebrations/{id}
+                const pathParts = docPath.split('/');
+                let pathHostUid = undefined;
+                if (pathParts.length >= 4 && pathParts[0] === 'users') {
+                  pathHostUid = pathParts[1];
+                }
+                const mergedData = {
+                  ...data,
+                  hostUid: data.hostUid || data.userId || pathHostUid,
+                  userId: data.userId || pathHostUid,
+                };
+                const event = normalizeCelebrationDoc(docSnap.id, mergedData, dbName, groupName);
+                eventsMap.set(docPath, event);
+                this.activeEventsPathMap.set(docPath, { event, path: docPath, collection: groupName });
+                rawSamplesMap.set(docPath, {
+                  id: docSnap.id,
+                  path: docPath,
+                  collection: `group:${groupName}`,
+                  dbInstance: dbName,
+                  title: event.title,
+                  keys: Object.keys(data),
+                });
+              });
+              snapshot.docChanges().forEach((change) => {
+                if (change.type === 'removed') {
+                  eventsMap.delete(change.doc.ref.path);
+                  this.activeEventsPathMap.delete(change.doc.ref.path);
+                  rawSamplesMap.delete(change.doc.ref.path);
+                }
+              });
+              emitMergedEvents();
+            },
+            (error) => {
+              console.info(`[Firestore] Group listener info for ${groupName} on ${dbName}:`, error.message);
+            }
+          );
+          unsubscribers.push(unsub);
+        } catch (err) {
+          console.info(`[Firestore] Group listener setup notice for ${groupName}:`, err);
         }
       });
     });
@@ -329,13 +632,61 @@ class FirestoreSyncService {
     };
   }
 
-  // Subscribe to live users across both databases
-  subscribeUsers(onUpdate: (users: UserAccount[]) => void): () => void {
+  getUserEventCounts(userId: string): { androidEvents: number; legacyCelebrations: number } {
+    let androidEvents = 0;
+    let legacyCelebrations = 0;
+
+    this.activeEventsPathMap.forEach(({ event, path, collection }) => {
+      // Exclude tombstone / deleted events
+      if ((event as any).isDeleted === true || (event as any).deleted === true || (event.status as string) === 'deleted') return;
+
+      const pathParts = path.split('/');
+      const isUserPath = pathParts.length >= 4 && pathParts[0] === 'users' && pathParts[1] === userId;
+      const isUserOwner = event.hostUid === userId || event.userId === userId;
+
+      if (isUserPath || isUserOwner) {
+        if (collection.includes('events') || pathParts.includes('events')) {
+          androidEvents++;
+        } else if (collection.includes('celebrations') || pathParts.includes('celebrations')) {
+          legacyCelebrations++;
+        }
+      }
+    });
+
+    return { androidEvents, legacyCelebrations };
+  }
+
+  // Subscribe to live users across all Firestore collections with 3-way merging (users, preferences, analytics)
+  subscribeUsers(onUpdate: (users: CanonicalUserDashboardRecord[]) => void): () => void {
     const unsubscribers: (() => void)[] = [];
-    const usersMap = new Map<string, UserAccount>();
+    const rawUsersMap = new Map<string, any>();
+    const userPrefsMap = new Map<string, any>();
+    const analyticsUsersMap = new Map<string, any>();
+    const usersMap = new Map<string, CanonicalUserDashboardRecord>();
+
+    const recomputeUser = (uid: string) => {
+      const raw = rawUsersMap.get(uid);
+      const prefData = userPrefsMap.get(uid);
+      const analyticsData = analyticsUsersMap.get(uid);
+
+      if (!raw && !prefData && !analyticsData) {
+        usersMap.delete(uid);
+        return;
+      }
+
+      const user = normalizeUserDoc(uid, raw, prefData, analyticsData);
+      usersMap.set(uid, user);
+    };
 
     const emitMergedUsers = () => {
-      const allUsers = Array.from(usersMap.values());
+      const allUsers = Array.from(usersMap.values()).map((u) => {
+        const counts = this.getUserEventCounts(u.id);
+        return {
+          ...u,
+          androidEventsCount: counts.androidEvents,
+          legacyCelebrationsCount: Math.max(u.celebrationsHosted || 0, counts.legacyCelebrations),
+        };
+      });
       this.liveUsersCount = allUsers.length;
       this.diagnosticInfo.totalUsersDetected = allUsers.length;
       this.notifyStatus('connected', allUsers.length);
@@ -348,6 +699,7 @@ class FirestoreSyncService {
     ];
 
     dbInstances.forEach(({ name: dbName, instance }) => {
+      // 1. Root users collection listener
       try {
         const usersCol = collection(instance, 'users');
         const unsub = onSnapshot(
@@ -355,12 +707,13 @@ class FirestoreSyncService {
           (snapshot) => {
             snapshot.docs.forEach((docSnap) => {
               const data = docSnap.data();
-              const user = normalizeUserDoc(docSnap.id, data);
-              usersMap.set(docSnap.id, user);
+              rawUsersMap.set(docSnap.id, data);
+              recomputeUser(docSnap.id);
             });
             snapshot.docChanges().forEach((change) => {
               if (change.type === 'removed') {
-                usersMap.delete(change.doc.id);
+                rawUsersMap.delete(change.doc.id);
+                recomputeUser(change.doc.id);
               }
             });
             emitMergedUsers();
@@ -372,6 +725,72 @@ class FirestoreSyncService {
         unsubscribers.push(unsub);
       } catch (err) {
         console.info(`[Firestore] Users listener setup on ${dbName}:`, err);
+      }
+
+      // 2. Preferences subcollection group listener: users/{uid}/settings/preferences
+      try {
+        const prefGroupRef = collectionGroup(instance, 'preferences');
+        const unsub = onSnapshot(
+          prefGroupRef,
+          (snapshot) => {
+            snapshot.docs.forEach((docSnap) => {
+              const data = docSnap.data();
+              const pathParts = docSnap.ref.path.split('/');
+              if (pathParts.length >= 3 && pathParts[0] === 'users') {
+                const uid = pathParts[1];
+                userPrefsMap.set(uid, data);
+                recomputeUser(uid);
+              }
+            });
+            snapshot.docChanges().forEach((change) => {
+              if (change.type === 'removed') {
+                const pathParts = change.doc.ref.path.split('/');
+                if (pathParts.length >= 3 && pathParts[0] === 'users') {
+                  const uid = pathParts[1];
+                  userPrefsMap.delete(uid);
+                  recomputeUser(uid);
+                }
+              }
+            });
+            emitMergedUsers();
+          },
+          (error) => {
+            console.info(`[Firestore] User preferences group listener info on ${dbName}:`, error.message);
+          }
+        );
+        unsubscribers.push(unsub);
+      } catch (err) {
+        console.info(`[Firestore] User preferences group listener setup on ${dbName}:`, err);
+      }
+
+      // 3. Analytics users listener: analytics/monetization_stats/users
+      try {
+        const analyticsCol = collection(instance, 'analytics/monetization_stats/users');
+        const unsub = onSnapshot(
+          analyticsCol,
+          (snapshot) => {
+            snapshot.docs.forEach((docSnap) => {
+              const data = docSnap.data();
+              const uid = data.uid || docSnap.id;
+              analyticsUsersMap.set(uid, data);
+              recomputeUser(uid);
+            });
+            snapshot.docChanges().forEach((change) => {
+              if (change.type === 'removed') {
+                const uid = change.doc.data().uid || change.doc.id;
+                analyticsUsersMap.delete(uid);
+                recomputeUser(uid);
+              }
+            });
+            emitMergedUsers();
+          },
+          (error) => {
+            console.info(`[Firestore] Analytics users listener info on ${dbName}:`, error.message);
+          }
+        );
+        unsubscribers.push(unsub);
+      } catch (err) {
+        console.info(`[Firestore] Analytics users listener setup on ${dbName}:`, err);
       }
     });
 
@@ -452,6 +871,35 @@ class FirestoreSyncService {
     const updatePromises = [
       setDoc(doc(db, 'users', userId), payload, { merge: true }),
       setDoc(doc(defaultDb, 'users', userId), payload, { merge: true }),
+    ];
+    await Promise.allSettled(updatePromises);
+  }
+
+  // Update user paid entitlement / PRO status across all top-level and preferences documents
+  async updateUserEntitlement(userId: string, isPro: boolean): Promise<void> {
+    const topLevelPayload = {
+      proStatus: isPro ? 'PRO' : 'FREE',
+      removeAdsLifetime: isPro,
+      isPro: isPro,
+      entitlements: {
+        remove_ads_lifetime: isPro,
+      },
+      updatedAt: new Date().toISOString(),
+    };
+
+    const prefPayload = {
+      remove_ads_lifetime: isPro,
+      proStatus: isPro ? 'PRO' : 'FREE',
+      removeAdsLifetime: isPro,
+      isPro: isPro,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const updatePromises = [
+      setDoc(doc(db, 'users', userId), topLevelPayload, { merge: true }),
+      setDoc(doc(defaultDb, 'users', userId), topLevelPayload, { merge: true }),
+      setDoc(doc(db, 'users', userId, 'settings', 'preferences'), prefPayload, { merge: true }),
+      setDoc(doc(defaultDb, 'users', userId, 'settings', 'preferences'), prefPayload, { merge: true }),
     ];
     await Promise.allSettled(updatePromises);
   }
@@ -749,22 +1197,30 @@ class FirestoreSyncService {
     ];
 
     dbInstances.forEach(({ name: dbName, instance }) => {
-      // Listen to both the organic Android 'reviews' collection and the simulated 'user_reviews' collection
-      const targetCollections = ['reviews', 'user_reviews'];
+      // Listen to both root and subcollection reviews (users/{uid}/reviews, events/{eventId}/reviews) via collectionGroup
+      const targetCollections = ['reviews', 'user_reviews', 'feedback'];
 
-      targetCollections.forEach(colName => {
+      targetCollections.forEach((colName) => {
         try {
-          const reviewsCol = collection(instance, colName);
+          const groupRef = collectionGroup(instance, colName);
           const unsub = onSnapshot(
-            reviewsCol,
+            groupRef,
             (snapshot) => {
               snapshot.docs.forEach((docSnap) => {
                 const data = docSnap.data();
-                
+                const pathParts = docSnap.ref.path.split('/');
+                let pathUserId = data.userId;
+                let pathEventId = data.eventId;
+                if (pathParts.length >= 4 && pathParts[0] === 'users' && pathParts[2] === colName) {
+                  pathUserId = pathUserId || pathParts[1];
+                }
+                if (pathParts.length >= 4 && pathParts[0] === 'events' && pathParts[2] === colName) {
+                  pathEventId = pathEventId || pathParts[1];
+                }
+
                 // Map the raw Android 'reviews' schema (or backend 'user_reviews') to the Admin UI 'UserReview' schema
                 const review: UserReview = {
                   id: docSnap.id,
-                  userId: data.userId || 'unknown-user',
                   userName: data.userDisplayName || data.userName || 'JoyfulDays User',
                   userEmail: data.userEmail || 'unknown@example.com',
                   rating: Number(data.rating) || 5,
@@ -779,15 +1235,17 @@ class FirestoreSyncService {
                   isPublic: data.isPublic !== undefined ? data.isPublic : true,
                   adminResponse: data.adminResponse,
                   respondedAt: data.respondedAt,
-                  // Preserve original fields underneath just in case they are used
+                  // Preserve original fields underneath
                   ...data,
+                  userId: pathUserId || data.userId || 'unknown-user',
+                  firestorePath: docSnap.ref.path,
                 };
-                
-                reviewsMap.set(docSnap.id, review);
+
+                reviewsMap.set(docSnap.ref.path, review);
               });
               snapshot.docChanges().forEach((change) => {
                 if (change.type === 'removed') {
-                  reviewsMap.delete(change.doc.id);
+                  reviewsMap.delete(change.doc.ref.path);
                 }
               });
               emitMergedReviews();
@@ -833,10 +1291,20 @@ class FirestoreSyncService {
       syncTimestamp: serverTimestamp(),
     };
 
+    const targetDocId = review.id || `review_${Date.now()}`;
     const syncPromises = [
-      setDoc(doc(db, 'user_reviews', review.id), payload, { merge: true }),
-      setDoc(doc(defaultDb, 'user_reviews', review.id), payload, { merge: true }),
+      setDoc(doc(db, 'user_reviews', targetDocId), payload, { merge: true }),
+      setDoc(doc(defaultDb, 'user_reviews', targetDocId), payload, { merge: true }),
     ];
+
+    if (review.firestorePath) {
+      try {
+        syncPromises.push(setDoc(doc(db, review.firestorePath), payload, { merge: true }));
+        syncPromises.push(setDoc(doc(defaultDb, review.firestorePath), payload, { merge: true }));
+      } catch (err) {
+        console.info('[Firestore] Notice writing back to review firestorePath:', err);
+      }
+    }
 
     await Promise.allSettled(syncPromises);
   }

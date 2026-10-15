@@ -106,6 +106,7 @@ export type UserReview = {
   isPublic: boolean;
   adminResponse?: string;
   respondedAt?: string;
+  firestorePath?: string;
 };
 
 export type UserWithReviewDetails = {
@@ -382,22 +383,104 @@ export type AdMobCountryRevenue = {
   ecpm: number;
 };
 
-// Module 3: User Database & Celebration Event Stats
-export type UserAccount = {
+export type UserPaymentEvidence = {
+  hasRecordedPayment: boolean;
+  verificationStatus: 'Payment Verified' | 'Evidence recorded — unverified' | 'No payment recorded' | 'Unverified / Client Flag';
+  amountPaid?: number;
+  amountFormatted?: string;
+  currency?: string;
+  transactionId?: string;
+  paymentIntentId?: string;
+  stripeSessionId?: string;
+  purchasedAt?: string;
+  paymentSource?: string;
+};
+
+export interface StripeTransactionRecord {
   id: string;
+  stripeEventId: string;
+  checkoutSessionId?: string | null;
+  paymentIntentId?: string | null;
+  chargeId?: string | null;
+  stripeCustomerId?: string | null;
+  uid?: string | null;
+  customerEmail?: string | null;
+  amount: number; // Stripe minor units
+  amountFormatted?: string | null;
+  currency: string;
+  paymentStatus: 'paid' | 'unpaid' | 'succeeded' | 'failed' | 'refunded' | 'partially_refunded' | string;
+  checkoutStatus?: 'complete' | 'open' | 'expired' | string | null;
+  paymentMethodType?: string | null;
+  stripeEventTimestamp?: string | null;
+  paymentCompletionTimestamp?: string | null;
+  createdAt?: string | null;
+  refundStatus?: 'none' | 'refunded' | 'partially_refunded' | string;
+  refundedAmount?: number;
+  source: 'STRIPE_VERIFIED_WEBHOOK' | 'LEGACY_UNVERIFIED_EVIDENCE' | string;
+}
+
+export type UserAdvancedFeatures = {
+  unlocked: boolean;
+  adsWatched: number;
+  rewardAdsRequired: number;
+  hasAdDiscrepancy?: boolean;
+  adDiscrepancyNote?: string;
+  analyticsAdsWatched?: number;
+  analyticsUnlocked?: boolean;
+};
+
+export type CanonicalUserDashboardRecord = {
+  id: string; // Firebase Authentication UID
+  uid: string;
   name: string;
   email: string;
   avatar: string;
   joinedDate: string;
+  lastActive: string;
   status: 'active' | 'vip' | 'verified' | 'flagged' | 'suspended';
+  isGoogleUser?: boolean;
+  country: string;
+  countryCode?: string;
+  stateCode?: string;
+  state?: string;
+  
+  // Authoritative PRO Entitlement
+  isPro: boolean;
+  proStatus: 'PRO' | 'NO_PRO';
+  entitlements: Record<string, boolean>;
+  hasProDiscrepancy?: boolean;
+  proDiscrepancyNote?: string;
+
+  // Payment Evidence
+  paymentEvidence: UserPaymentEvidence;
+
+  // Advanced Features & Rewarded Ads
+  advancedFeatures: UserAdvancedFeatures;
+
+  // Event counts
+  androidEventsCount: number;
+  legacyCelebrationsCount: number;
   celebrationsHosted: number;
   giftsSentCount: number;
   totalGiftsVolume: number;
-  lastActive: string;
-  country: string;
   loyaltyTier: 'Gold' | 'Platinum' | 'Diamond' | 'Standard';
-  isGoogleUser?: boolean; // Android Specific Field
+
+  // Analytics raw record
+  analyticsData?: {
+    adsWatchedCount?: number;
+    isUnlocked?: boolean;
+    removeAdsLifetime?: boolean;
+    amountPaid?: number;
+    amountFormatted?: string;
+    transactionId?: string;
+    paymentIntentId?: string;
+    lastUpdatedAt?: string;
+    unlockedAt?: string;
+  };
 };
+
+// UserAccount is aliased to CanonicalUserDashboardRecord for 100% shared model across all modules
+export type UserAccount = CanonicalUserDashboardRecord;
 
 export type CelebrationEvent = {
   id: string;
@@ -417,6 +500,9 @@ export type CelebrationEvent = {
   schemaVersion?: number;
   createdAt?: string;
   // Android Specific Fields
+  personName?: string;
+  dateIso?: string;
+  userId?: string;
   daysAway?: number;
   isToday?: boolean;
   isRecurring?: boolean;

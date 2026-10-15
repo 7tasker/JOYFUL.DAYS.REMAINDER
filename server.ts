@@ -75,6 +75,87 @@ export function verifyAdminToken(token: string): {
   }
 }
 
+// Secure Admin PIN credentials & Slow Hashing Scheme (scrypt with salt)
+const ADMIN_PIN_SALT = process.env.ADMIN_PIN_SALT || "jd_admin_pin_salt_935631ae";
+const DEFAULT_ADMIN_PIN = process.env.ADMIN_PIN || "848933";
+
+function hashAdminPin(pin: string, salt: string = ADMIN_PIN_SALT): string {
+  return crypto.scryptSync(pin, salt, 64).toString("hex");
+}
+
+const STORED_ADMIN_PIN_HASH = process.env.ADMIN_PIN_HASH || hashAdminPin(DEFAULT_ADMIN_PIN);
+
+export function verifyPinCredential(inputPin: string): boolean {
+  if (!inputPin) return false;
+  const cleanPin = inputPin.trim();
+  if (!cleanPin) return false;
+
+  const inputHash = hashAdminPin(cleanPin);
+  try {
+    return crypto.timingSafeEqual(Buffer.from(inputHash, "hex"), Buffer.from(STORED_ADMIN_PIN_HASH, "hex"));
+  } catch {
+    return false;
+  }
+}
+
+// In-Memory Rate Limiting & Lockout Protection for Admin Login
+interface LoginAttemptRecord {
+  count: number;
+  firstAttemptTime: number;
+  lockoutUntil: number;
+}
+const loginAttemptMap = new Map<string, LoginAttemptRecord>();
+
+function checkAdminLoginRateLimit(ipOrEmail: string): { allowed: boolean; remainingMs?: number } {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000; // 15 minutes
+  const maxAttempts = 5;
+
+  const record = loginAttemptMap.get(ipOrEmail);
+  if (!record) return { allowed: true };
+
+  if (record.lockoutUntil && record.lockoutUntil > now) {
+    return { allowed: false, remainingMs: record.lockoutUntil - now };
+  }
+
+  if (now - record.firstAttemptTime > windowMs) {
+    loginAttemptMap.delete(ipOrEmail);
+    return { allowed: true };
+  }
+
+  if (record.count >= maxAttempts) {
+    record.lockoutUntil = now + windowMs;
+    return { allowed: false, remainingMs: windowMs };
+  }
+
+  return { allowed: true };
+}
+
+function recordAdminFailedAttempt(ipOrEmail: string) {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000;
+  const record = loginAttemptMap.get(ipOrEmail) || { count: 0, firstAttemptTime: now, lockoutUntil: 0 };
+
+  if (now - record.firstAttemptTime > windowMs) {
+    record.count = 1;
+    record.firstAttemptTime = now;
+    record.lockoutUntil = 0;
+  } else {
+    record.count += 1;
+  }
+
+  if (record.count >= 5) {
+    record.lockoutUntil = now + windowMs;
+  }
+
+  loginAttemptMap.set(ipOrEmail, record);
+}
+
+function clearAdminFailedAttempts(ipOrEmail: string) {
+  loginAttemptMap.delete(ipOrEmail);
+}
+
+
 // Initialize Firebase Admin SDK safely using Application Default Credentials (ADC) or project configuration
 import firebaseAppConfig from "./firebase-applet-config.json";
 
@@ -226,79 +307,142 @@ app.post("/webhook/stripe", express.raw({ type: "application/json" }), async (re
 
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
-    if (session.payment_status === "paid" || session.status === "complete") {
-      const uid = session.metadata?.firebaseUid;
-      if (uid) {
-        const transactionId = session.id;
-        const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : (session.id || "");
-        const amountPaid = session.amount_total || 0;
-        const currency = (session.currency || "USD").toUpperCase();
-        const amountFormatted = `$${(amountPaid / 100).toFixed(2)} ${currency}`;
-        const purchasedAtISO = new Date().toISOString();
-        const userEmail = session.customer_details?.email || session.metadata?.userEmail || `${uid}@joyfuldays.app`;
+    const isPaid = session.payment_status === "paid" || session.status === "complete";
+    const uid = session.metadata?.firebaseUid;
+    const transactionId = session.id;
+    const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : (session.payment_intent?.id || session.id || "");
+    const amountPaid = session.amount_total || 0;
+    const currency = (session.currency || "USD").toUpperCase();
+    const amountFormatted = `$${(amountPaid / 100).toFixed(2)} ${currency}`;
+    const purchasedAtISO = new Date(event.created * 1000).toISOString();
+    const userEmail = session.customer_details?.email || session.metadata?.userEmail || (uid ? `${uid}@joyfuldays.app` : "unassigned@joyfuldays.app");
+    const customerId = typeof session.customer === "string" ? session.customer : (session.customer?.id || null);
 
-        const prefRef = db.collection("users").doc(uid).collection("settings").doc("preferences");
-        await prefRef.set({
+    // Write to dedicated Stripe Transactions Ledger
+    const ledgerRef = db.collection("stripe_transactions").doc(eventId);
+    await ledgerRef.set({
+      id: eventId,
+      stripeEventId: eventId,
+      checkoutSessionId: transactionId,
+      paymentIntentId,
+      chargeId: null,
+      stripeCustomerId: customerId,
+      uid: uid || null,
+      customerEmail: userEmail,
+      amount: amountPaid,
+      amountFormatted,
+      currency,
+      paymentStatus: session.payment_status || "unpaid",
+      checkoutStatus: session.status || "open",
+      paymentMethodType: session.payment_method_types?.[0] || "card",
+      stripeEventTimestamp: purchasedAtISO,
+      paymentCompletionTimestamp: new Date().toISOString(),
+      createdAt: FieldValue.serverTimestamp(),
+      refundStatus: "none",
+      refundedAmount: 0,
+      source: "STRIPE_VERIFIED_WEBHOOK",
+    }, { merge: true });
+
+    // ONLY grant PRO and update user entitlements if session payment is verified as paid!
+    if (isPaid && uid) {
+      const prefRef = db.collection("users").doc(uid).collection("settings").doc("preferences");
+      await prefRef.set({
+        remove_ads_lifetime: true,
+        proStatus: "PRO",
+        removeAdsLifetime: true,
+        isPro: true,
+        removeAdsProvider: "stripe",
+        removeAdsPurchasedAt: FieldValue.serverTimestamp(),
+        removeAdsStripeSessionId: transactionId,
+        removeAdsStripeCustomerId: customerId,
+        transactionId,
+        paymentIntentId,
+        amountPaid,
+        amountFormatted,
+        currency,
+        userEmail,
+        purchasedAt: purchasedAtISO,
+      }, { merge: true });
+
+      // Synced user entitlement fields on top-level users/{uid}
+      const userRef = db.collection("users").doc(uid);
+      await userRef.set({
+        proStatus: "PRO",
+        removeAdsLifetime: true,
+        isPro: true,
+        entitlements: {
           remove_ads_lifetime: true,
-          removeAdsProvider: "stripe",
-          removeAdsPurchasedAt: FieldValue.serverTimestamp(),
-          removeAdsStripeSessionId: transactionId,
-          removeAdsStripeCustomerId: typeof session.customer === "string" ? session.customer : (session.customer?.id || ""),
-          transactionId,
-          paymentIntentId,
-          amountPaid,
-          amountFormatted,
-          currency,
-          userEmail,
-          purchasedAt: purchasedAtISO,
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      // Option B: Store transaction details in analytics/monetization_stats/users/{uid}
+      const userMonetizationRef = db.collection("analytics").doc("monetization_stats").collection("users").doc(uid);
+      await userMonetizationRef.set({
+        uid,
+        userEmail,
+        isUnlocked: true,
+        removeAdsLifetime: true,
+        transactionId,
+        paymentIntentId,
+        amountPaid,
+        amountFormatted,
+        currency,
+        purchasedAt: purchasedAtISO,
+        lastUpdatedAt: purchasedAtISO,
+        unlockedAt: purchasedAtISO,
+      }, { merge: true });
+
+      const analyticsRef = db.collection("analytics").doc("remove_ads");
+      await db.runTransaction(async (transaction) => {
+        const docSnap = await transaction.get(analyticsRef);
+        const data = docSnap.exists ? docSnap.data() : {};
+        const totalPayments = (data?.totalRemoveAdsPayments || 0) + 1;
+        const revenue = (data?.totalRemoveAdsRevenue || 0) + amountPaid;
+        const breakdown = data?.currencyBreakdown || {};
+        breakdown[currency] = (breakdown[currency] || 0) + amountPaid;
+
+        const buyers = data?.buyers || [];
+        let uniqueUsers = data?.totalRemoveAdsUsers || 0;
+        if (!buyers.includes(uid)) {
+          buyers.push(uid);
+          uniqueUsers += 1;
+        }
+
+        transaction.set(analyticsRef, {
+          totalRemoveAdsPayments: totalPayments,
+          totalRemoveAdsUsers: uniqueUsers,
+          totalRemoveAdsRevenue: revenue,
+          currencyBreakdown: breakdown,
+          lastPurchaseAt: purchasedAtISO,
+          latestPaymentAmount: amountPaid,
+          latestCurrency: currency,
+          buyers,
         }, { merge: true });
-
-        // Option B: Store transaction details in analytics/monetization_stats/users/{uid}
-        const userMonetizationRef = db.collection("analytics").doc("monetization_stats").collection("users").doc(uid);
-        await userMonetizationRef.set({
-          uid,
-          userEmail,
-          isUnlocked: true,
-          removeAdsLifetime: true,
-          transactionId,
-          paymentIntentId,
-          amountPaid,
-          amountFormatted,
-          currency,
-          purchasedAt: purchasedAtISO,
-          lastUpdatedAt: purchasedAtISO,
-          unlockedAt: purchasedAtISO,
-        }, { merge: true });
-
-        const analyticsRef = db.collection("analytics").doc("remove_ads");
-        await db.runTransaction(async (transaction) => {
-          const doc = await transaction.get(analyticsRef);
-          const data = doc.exists ? doc.data() : {};
-          const totalPayments = (data?.totalRemoveAdsPayments || 0) + 1;
-          const revenue = (data?.totalRemoveAdsRevenue || 0) + (session.amount_total || 0);
-          const breakdown = data?.currencyBreakdown || {};
-          breakdown[currency] = (breakdown[currency] || 0) + (session.amount_total || 0);
-
-          const buyers = data?.buyers || [];
-          let uniqueUsers = data?.totalRemoveAdsUsers || 0;
-          if (!buyers.includes(uid)) {
-            buyers.push(uid);
-            uniqueUsers += 1;
-          }
-
-          transaction.set(analyticsRef, {
-            totalRemoveAdsPayments: totalPayments,
-            totalRemoveAdsUsers: uniqueUsers,
-            totalRemoveAdsRevenue: revenue,
-            currencyBreakdown: breakdown,
-            lastPurchaseAt: purchasedAtISO,
-            latestPaymentAmount: session.amount_total || 0,
-            latestCurrency: currency,
-            buyers,
-          }, { merge: true });
-        });
-      }
+      });
     }
+  } else if (event.type === "charge.refunded" || event.type === "charge.refund.updated") {
+    const charge = event.data.object as Stripe.Charge;
+    const ledgerRef = db.collection("stripe_transactions").doc(eventId);
+    const amountRefunded = charge.amount_refunded || 0;
+    const currency = (charge.currency || "USD").toUpperCase();
+    await ledgerRef.set({
+      id: eventId,
+      stripeEventId: eventId,
+      paymentIntentId: typeof charge.payment_intent === "string" ? charge.payment_intent : null,
+      chargeId: charge.id,
+      stripeCustomerId: typeof charge.customer === "string" ? charge.customer : null,
+      customerEmail: charge.billing_details?.email || charge.receipt_email || null,
+      amount: charge.amount || 0,
+      amountFormatted: `$${((charge.amount || 0) / 100).toFixed(2)} ${currency}`,
+      currency,
+      paymentStatus: charge.refunded ? "refunded" : "partially_refunded",
+      refundStatus: charge.refunded ? "refunded" : "partially_refunded",
+      refundedAmount: amountRefunded,
+      stripeEventTimestamp: new Date(event.created * 1000).toISOString(),
+      createdAt: FieldValue.serverTimestamp(),
+      source: "STRIPE_VERIFIED_WEBHOOK",
+    }, { merge: true });
   }
 
   await eventRef.set({ processedAt: new Date().toISOString() });
@@ -387,45 +531,44 @@ export const requireAdminAuth = async (
     });
   }
 
-  // 3. Fallback: Firebase ID Token for Google OAuth logins (JWT with 2 dots: header.payload.signature)
+  // 3. Firebase ID Token for Google OAuth logins (JWT with 2 dots: header.payload.signature)
   if (dotCount === 2) {
     try {
-      if (getAdminApps().length) {
-        const adminAuth = getAdminAuth();
-        const decodedToken = await adminAuth.verifyIdToken(token);
+      if (!getAdminApps().length) {
+        return res.status(401).json({
+          error: "Unauthorized",
+          code: "FIREBASE_NOT_INITIALIZED",
+          message: "Firebase Admin SDK is not initialized.",
+        });
+      }
+      const adminAuth = getAdminAuth();
+      const decodedToken = await adminAuth.verifyIdToken(token);
 
-        const isDesignatedAdminEmail =
-          decodedToken.email &&
-          ROOT_ADMIN_EMAILS.includes(decodedToken.email.toLowerCase().trim()) &&
-          (decodedToken.email_verified === true || decodedToken.firebase?.sign_in_provider === "google.com");
+      if (decodedToken && decodedToken.email) {
+        const email = decodedToken.email.toLowerCase().trim();
+        const isDesignatedAdminEmail = ROOT_ADMIN_EMAILS.includes(email);
 
-        // Check if custom claim admin: true exists
-        if (decodedToken.admin === true) {
-          (req as any).user = decodedToken;
-          return next();
-        }
-
-        // Auto-bootstrap admin claim if authenticated user is the designated root administrator
-        if (isDesignatedAdminEmail) {
-          try {
-            await adminAuth.setCustomUserClaims(decodedToken.uid, { admin: true });
-            console.log(`[Auth] Synchronized admin custom claim for uid=${decodedToken.uid}`);
-          } catch (claimErr) {
-            console.warn("[Auth] Notice during custom claim assignment:", (claimErr as any)?.message);
+        if (decodedToken.admin === true || isDesignatedAdminEmail) {
+          if (decodedToken.uid && decodedToken.admin !== true) {
+            try {
+              await adminAuth.setCustomUserClaims(decodedToken.uid, { admin: true });
+            } catch (claimErr) {
+              // ignore
+            }
           }
-          (req as any).user = { ...decodedToken, admin: true };
+          (req as any).user = { ...decodedToken, email, admin: true };
           return next();
         }
 
         return res.status(403).json({
           error: "Forbidden",
           code: "UNAUTHORIZED",
-          message: "Administrative privileges required (claim admin: true not present).",
+          message: `Administrative privileges required. ${email} is not an authorized administrator email.`,
         });
       }
-    } catch (err: any) {
-      console.warn("[Auth] Firebase ID token verification rejected:", err?.code || "invalid_token");
-      if (err?.code === "auth/id-token-expired") {
+    } catch (verifyErr: any) {
+      console.warn("[Auth] Firebase verifyIdToken failed:", verifyErr?.message || verifyErr);
+      if (verifyErr?.code === "auth/id-token-expired") {
         return res.status(401).json({
           error: "Unauthorized",
           code: "SESSION_EXPIRED",
@@ -434,10 +577,15 @@ export const requireAdminAuth = async (
       }
       return res.status(401).json({
         error: "Unauthorized",
-        code: "INVALID_SESSION",
-        message: "Invalid Firebase ID token.",
+        code: "INVALID_TOKEN",
+        message: "Provided Firebase token failed administrative verification.",
       });
     }
+    return res.status(401).json({
+      error: "Unauthorized",
+      code: "INVALID_SESSION",
+      message: "Invalid Firebase ID token.",
+    });
   }
 
   // 4. Any other token (e.g. malformed legacy static tokens like 'admin-token-joyfuldays' without dots) -> INVALID_SESSION
@@ -1074,57 +1222,84 @@ const handleGiftingUpdate = async (req: express.Request, res: express.Response) 
 app.post("/api/gifting-status", requireAdminAuth, handleGiftingUpdate);
 app.post("/api/gifting-toggle", requireAdminAuth, handleGiftingUpdate);
 
-// 4. [ADMIN-ONLY] Admin Session Login (Issues Cryptographic Expiring HMAC Session Token)
+// 4. [ADMIN-ONLY] Admin Session Login (Secure Email + PIN Authentication)
 app.post("/api/admin/login", express.json(), async (req, res) => {
-  const { email, pin, durationMinutes = 60 } = req.body || {};
-  const normalizedEmail = (email || "").toLowerCase().trim();
+  const { email, pin, backupCode } = req.body || {};
+  const clientIp = req.ip || req.socket.remoteAddress || "unknown_ip";
+  const normalizedEmail = (email || "").trim().toLowerCase();
 
-  if (!normalizedEmail || !ROOT_ADMIN_EMAILS.includes(normalizedEmail)) {
-    return res.status(401).json({
+  if (!normalizedEmail || (!pin && !backupCode)) {
+    return res.status(400).json({
       success: false,
-      error: "Unauthorized",
-      message: "Invalid administrator email.",
+      error: "BAD_REQUEST",
+      code: "MISSING_FIELDS",
+      message: "Email address and PIN (or backup code) are required.",
     });
   }
 
-  // Verify PIN (default 784920 or backup emergency PIN)
-  const isValidPin =
-    pin === "784920" ||
-    pin === "123456" ||
-    (typeof pin === "string" && pin.length === 6 && /^\d+$/.test(pin));
-
-  if (!isValidPin) {
-    return res.status(401).json({
+  // Rate limiting check per IP and Email combination
+  const rateLimitKey = `${clientIp}_${normalizedEmail}`;
+  const rateLimit = checkAdminLoginRateLimit(rateLimitKey);
+  if (!rateLimit.allowed) {
+    const minutesLeft = Math.max(1, Math.ceil((rateLimit.remainingMs || 0) / 60000));
+    return res.status(429).json({
       success: false,
-      error: "Unauthorized",
-      message: "Invalid administrator PIN.",
+      error: "TOO_MANY_REQUESTS",
+      code: "RATE_LIMIT_EXCEEDED",
+      message: `Too many failed login attempts. Account temporarily locked out. Please try again in ${minutesLeft} minute(s).`,
     });
   }
 
-  const exp = Date.now() + Math.max(5, durationMinutes) * 60 * 1000;
-  const payload: AdminSessionPayload = {
+  const sendUnauthorized = () => {
+    recordAdminFailedAttempt(rateLimitKey);
+    return res.status(401).json({
+      success: false,
+      error: "UNAUTHORIZED",
+      code: "INVALID_CREDENTIALS",
+      message: "Invalid administrator email or PIN credentials.",
+    });
+  };
+
+  // Step 1: Verify whether the email belongs to the designated root administrators
+  if (!ROOT_ADMIN_EMAILS.includes(normalizedEmail)) {
+    return sendUnauthorized();
+  }
+
+  // Step 2: Verify PIN credentials using slow scrypt hashed comparison
+  const inputPin = (pin || backupCode || "").trim();
+  const isPinValid = verifyPinCredential(inputPin);
+
+  if (!isPinValid) {
+    return sendUnauthorized();
+  }
+
+  // Clear failed attempt counter on successful login
+  clearAdminFailedAttempts(rateLimitKey);
+
+  // Issue HMAC signed Admin Session Token (24-hour expiration)
+  const exp = Date.now() + 24 * 60 * 60 * 1000;
+  const sessionPayload: AdminSessionPayload = {
     email: normalizedEmail,
-    role: "Super Administrator (Tier-1 Access)",
+    role: "super_admin",
     iat: Date.now(),
     exp,
-    sessionId: crypto.randomUUID(),
+    sessionId: `admin_session_${crypto.randomBytes(8).toString("hex")}`,
   };
-  const token = signAdminToken(payload);
+
+  const token = signAdminToken(sessionPayload);
 
   return res.json({
     success: true,
     token,
-    expiresAt: exp,
     user: {
-      email: payload.email,
+      email: normalizedEmail,
       name: "Root Administrator",
-      role: payload.role,
-      avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
-      securityLevel: "Tier-1 Root SuperAdmin",
-      twoFactorEnabled: true,
+      role: "Super Admin",
     },
+    expiresAt: exp,
   });
 });
+
 
 // [ADMIN-ONLY] Verify Active Admin Session Status
 app.get("/api/admin/session", requireAdminAuth, (req, res) => {
@@ -1144,34 +1319,43 @@ app.post("/api/admin/verify-or-claim", async (req, res) => {
   const token = authHeader.split("Bearer ")[1].trim();
   try {
     if (!getAdminApps().length) {
-      return res.status(503).json({ success: false, error: "Firebase Admin SDK uninitialized" });
+      return res.status(401).json({ success: false, error: "Firebase Admin SDK is not initialized." });
     }
     const adminAuth = getAdminAuth();
     const decodedToken = await adminAuth.verifyIdToken(token);
-    const isDesignatedAdminEmail =
-      decodedToken.email &&
-      ROOT_ADMIN_EMAILS.includes(decodedToken.email.toLowerCase().trim()) &&
-      (decodedToken.email_verified === true || decodedToken.firebase?.sign_in_provider === "google.com");
+
+    if (!decodedToken || !decodedToken.email) {
+      return res.status(401).json({ success: false, error: "Invalid token" });
+    }
+
+    const email = decodedToken.email.toLowerCase().trim();
+    const isDesignatedAdminEmail = ROOT_ADMIN_EMAILS.includes(email);
 
     if (decodedToken.admin === true || isDesignatedAdminEmail) {
-      if (decodedToken.admin !== true) {
-        await adminAuth.setCustomUserClaims(decodedToken.uid, { admin: true });
+      if (getAdminApps().length && decodedToken.uid && decodedToken.admin !== true) {
+        try {
+          const adminAuth = getAdminAuth();
+          await adminAuth.setCustomUserClaims(decodedToken.uid, { admin: true });
+        } catch (claimErr: any) {
+          console.warn("[Admin Claim Warning]: Notice during claim assignment:", claimErr?.message || claimErr);
+        }
       }
       return res.json({
         success: true,
         isAdmin: true,
-        uid: decodedToken.uid,
+        uid: decodedToken.uid || decodedToken.sub || "google_admin",
         hasClaim: true,
+        email,
       });
     }
 
     return res.status(403).json({
       success: false,
       isAdmin: false,
-      error: "User is not authorized for administrative access.",
+      error: `Email ${email} is not authorized in ROOT_ADMIN_EMAILS for administrative access.`,
     });
   } catch (err: any) {
-    return res.status(401).json({ success: false, error: "Invalid token" });
+    return res.status(401).json({ success: false, error: err?.message || "Invalid token" });
   }
 });
 
@@ -2406,11 +2590,148 @@ app.post("/api/analytics/init-collections", requireAdminAuth, async (req, res) =
     res.json({
       success: true,
       message: "Firestore collections and monetization_stats analytics documents initialized successfully.",
-      collectionsCreated: ["analytics/monetization_stats", "analytics/remove_ads", "users/sample_user/settings/preferences", "settings/remove_ads", "settings/admob", "settings/gifting"],
+      collectionsCreated: ["analytics/monetization_stats", "analytics/remove_ads", "users/sample_user/settings/preferences", "settings/remove_ads", "settings/admob", "settings/gifting", "stripe_transactions"],
       timestamp: new Date().toISOString(),
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err?.message || "Failed to initialize Firestore collections" });
+  }
+});
+
+// 21. [ADMIN-ONLY] GET /api/stripe/transactions - Stripe Transaction History Ledger API
+app.get("/api/stripe/transactions", requireAdminAuth, async (req, res) => {
+  try {
+    const limitNum = Math.min(Math.max(parseInt((req.query.limit as string) || "25", 10), 1), 100);
+    const statusFilter = (req.query.status as string) || "all";
+    const currencyFilter = ((req.query.currency as string) || "all").toUpperCase();
+    const startDate = req.query.startDate as string | undefined;
+    const endDate = req.query.endDate as string | undefined;
+    const searchQuery = ((req.query.search as string) || "").toLowerCase().trim();
+
+    // Fetch transactions from stripe_transactions collection
+    const snap = await db.collection("stripe_transactions").get();
+    let records: any[] = [];
+
+    snap.docs.forEach((docSnap) => {
+      const data = docSnap.data();
+      records.push({
+        id: docSnap.id,
+        stripeEventId: data.stripeEventId || docSnap.id,
+        checkoutSessionId: data.checkoutSessionId || null,
+        paymentIntentId: data.paymentIntentId || null,
+        chargeId: data.chargeId || null,
+        stripeCustomerId: data.stripeCustomerId || null,
+        uid: data.uid || null,
+        customerEmail: data.customerEmail || null,
+        amount: Number(data.amount || 0),
+        amountFormatted: data.amountFormatted || `$${((data.amount || 0) / 100).toFixed(2)} ${data.currency || "USD"}`,
+        currency: (data.currency || "USD").toUpperCase(),
+        paymentStatus: data.paymentStatus || "paid",
+        checkoutStatus: data.checkoutStatus || "complete",
+        paymentMethodType: data.paymentMethodType || "card",
+        stripeEventTimestamp: data.stripeEventTimestamp || (data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString()),
+        paymentCompletionTimestamp: data.paymentCompletionTimestamp || null,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : null,
+        refundStatus: data.refundStatus || "none",
+        refundedAmount: Number(data.refundedAmount || 0),
+        source: data.source || "STRIPE_VERIFIED_WEBHOOK",
+      });
+    });
+
+    // Sort newest first
+    records.sort((a, b) => {
+      const tA = new Date(a.stripeEventTimestamp || a.createdAt || 0).getTime();
+      const tB = new Date(b.stripeEventTimestamp || b.createdAt || 0).getTime();
+      return tB - tA;
+    });
+
+    // Filter by payment status
+    if (statusFilter !== "all") {
+      records = records.filter((r) => r.paymentStatus.toLowerCase() === statusFilter.toLowerCase());
+    }
+
+    // Filter by currency
+    if (currencyFilter !== "ALL") {
+      records = records.filter((r) => r.currency === currencyFilter);
+    }
+
+    // Filter by date range
+    if (startDate) {
+      const startMs = new Date(startDate).getTime();
+      if (!isNaN(startMs)) {
+        records = records.filter((r) => new Date(r.stripeEventTimestamp).getTime() >= startMs);
+      }
+    }
+
+    if (endDate) {
+      const endMs = new Date(endDate).getTime();
+      if (!isNaN(endMs)) {
+        records = records.filter((r) => new Date(r.stripeEventTimestamp).getTime() <= endMs);
+      }
+    }
+
+    // Search filter
+    if (searchQuery) {
+      records = records.filter((r) => {
+        return (
+          (r.stripeEventId && r.stripeEventId.toLowerCase().includes(searchQuery)) ||
+          (r.checkoutSessionId && r.checkoutSessionId.toLowerCase().includes(searchQuery)) ||
+          (r.paymentIntentId && r.paymentIntentId.toLowerCase().includes(searchQuery)) ||
+          (r.chargeId && r.chargeId.toLowerCase().includes(searchQuery)) ||
+          (r.uid && r.uid.toLowerCase().includes(searchQuery)) ||
+          (r.customerEmail && r.customerEmail.toLowerCase().includes(searchQuery))
+        );
+      });
+    }
+
+    // Currency totals calculation (uncombined per currency)
+    const currencyTotals: Record<string, { count: number; grossAmount: number; formattedGross: string }> = {};
+    records.forEach((r) => {
+      if (r.paymentStatus === "paid" || r.paymentStatus === "succeeded" || r.paymentStatus === "complete") {
+        const curr = r.currency || "USD";
+        if (!currencyTotals[curr]) {
+          currencyTotals[curr] = { count: 0, grossAmount: 0, formattedGross: "" };
+        }
+        currencyTotals[curr].count += 1;
+        currencyTotals[curr].grossAmount += r.amount;
+      }
+    });
+
+    Object.keys(currencyTotals).forEach((curr) => {
+      const g = currencyTotals[curr].grossAmount;
+      currencyTotals[curr].formattedGross = `$${(g / 100).toFixed(2)} ${curr}`;
+    });
+
+    // Pagination
+    const totalCount = records.length;
+    const startAfter = req.query.startAfter as string | undefined;
+    let startIndex = 0;
+    if (startAfter) {
+      const idx = records.findIndex((r) => r.id === startAfter);
+      if (idx !== -1) startIndex = idx + 1;
+    }
+
+    const paginated = records.slice(startIndex, startIndex + limitNum);
+    const hasMore = startIndex + limitNum < totalCount;
+    const lastDocId = paginated.length > 0 ? paginated[paginated.length - 1].id : null;
+
+    res.json({
+      success: true,
+      transactions: paginated,
+      pagination: {
+        totalCount,
+        hasMore,
+        lastDocId,
+      },
+      summary: {
+        totalCount,
+        currencyTotals,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    console.error("[Stripe Transactions API] Error:", err);
+    res.status(500).json({ success: false, error: err?.message || "Failed to retrieve transaction history" });
   }
 });
 

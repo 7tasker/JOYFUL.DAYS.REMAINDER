@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AdminUser, ActiveModule, DatabaseBackup } from './types';
 import { StorageService } from './services/storageService';
 import { AdminSessionService } from './services/adminSessionService';
@@ -14,6 +14,7 @@ import { FinancialsModule } from './components/modules/FinancialsModule';
 import { UserReviewsModule } from './components/modules/UserReviewsModule';
 import { BackupTriggerModal } from './components/modals/BackupTriggerModal';
 import { GlobalSearchModal } from './components/modals/GlobalSearchModal';
+import { auth, signOut } from './services/firebase';
 
 export default function App() {
   const [sessionExpiredNotice, setSessionExpiredNotice] = useState<string | null>(null);
@@ -25,6 +26,7 @@ export default function App() {
     return user && StorageService.isAuthorizedAdmin(user.email) ? user : null;
   });
 
+  const [isLocked, setIsLocked] = useState<boolean>(() => AdminSessionService.isLocked());
   const [activeModule, setActiveModule] = useState<ActiveModule>('overview');
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -35,6 +37,7 @@ export default function App() {
     const unsub = AdminSessionService.onSessionExpired((msg) => {
       setSessionExpiredNotice(msg);
       setCurrentUser(null);
+      setIsLocked(false);
     });
     return () => unsub();
   }, []);
@@ -47,10 +50,44 @@ export default function App() {
         AdminSessionService.clearSession();
         setSessionExpiredNotice('Your admin session has expired. Please sign in again.');
         setCurrentUser(null);
+        setIsLocked(false);
       }
     }, 5000);
     return () => clearInterval(interval);
   }, [currentUser]);
+
+  // 15-Minute Zero-Trust Inactivity Auto-Lockout
+  useEffect(() => {
+    if (!currentUser || isLocked) return;
+
+    const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+    let idleTimer: ReturnType<typeof setTimeout>;
+
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        StorageService.addAuditLog({
+          actor: currentUser?.email || 'admin@7tasker.com',
+          action: 'ADMIN_SESSION_IDLE_LOCKOUT',
+          module: 'Security',
+          severity: 'warning',
+          details: 'Admin console automatically locked due to 15 minutes of inactivity.',
+        });
+        AdminSessionService.setLocked(true);
+        setIsLocked(true);
+      }, INACTIVITY_TIMEOUT_MS);
+    };
+
+    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+    activityEvents.forEach((evt) => window.addEventListener(evt, resetIdleTimer, { passive: true }));
+
+    resetIdleTimer();
+
+    return () => {
+      clearTimeout(idleTimer);
+      activityEvents.forEach((evt) => window.removeEventListener(evt, resetIdleTimer));
+    };
+  }, [currentUser, isLocked]);
 
   // Global ⌘K keyboard shortcut
   useEffect(() => {
@@ -64,13 +101,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleAuthenticated = (user: AdminUser) => {
+  const handleAuthenticated = useCallback((user: AdminUser) => {
     setSessionExpiredNotice(null);
-    setCurrentUser(user);
-    setActiveModule('overview');
-  };
+    setCurrentUser((prev) => {
+      // Only set activeModule to 'overview' on a fresh session login
+      if (!prev) {
+        setActiveModule('overview');
+      }
+      return user;
+    });
+    setIsLocked(false);
+  }, []);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     StorageService.addAuditLog({
       actor: currentUser?.email || 'admin@7tasker.com',
       action: 'ADMIN_SESSION_TERMINATED',
@@ -78,8 +121,21 @@ export default function App() {
       severity: 'info',
       details: 'Super administrator manually terminated session.',
     });
+
     AdminSessionService.clearSession();
+    AdminSessionService.setLocked(false);
+    setIsLocked(false);
+    
+    // Purge Firebase client authentication state completely
+    try {
+      await signOut(auth);
+    } catch {
+      // Ignore if already signed out
+    }
+
     setCurrentUser(null);
+    setSessionExpiredNotice(null);
+    setActiveModule('overview');
   };
 
   const handleLockSession = () => {
@@ -90,8 +146,14 @@ export default function App() {
       severity: 'info',
       details: 'Session locked by admin for zero-trust re-authentication.',
     });
-    AdminSessionService.clearSession();
-    setCurrentUser(null);
+
+    AdminSessionService.setLocked(true);
+    setIsLocked(true);
+  };
+
+  const handleUnlock = () => {
+    AdminSessionService.setLocked(false);
+    setIsLocked(false);
   };
 
   const handleBackupSuccess = (bkp: DatabaseBackup) => {
@@ -102,8 +164,11 @@ export default function App() {
   return (
     <AdminAuthGate
       currentUser={currentUser}
+      isLocked={isLocked}
       sessionExpiredNotice={sessionExpiredNotice}
       onAuthenticated={handleAuthenticated}
+      onUnlock={handleUnlock}
+      onLogout={handleLogout}
     >
       {currentUser && (
         <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-rose-500 selection:text-white">

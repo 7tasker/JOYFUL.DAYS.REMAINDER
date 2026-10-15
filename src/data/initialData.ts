@@ -47,7 +47,7 @@ export const INITIAL_TWO_FACTOR_CONFIG: TwoFactorSecurityConfig = {
   otpAuthUrl: 'otpauth://totp/JoyfulDays%20Admin:admin@7tasker.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=JoyfulDays&algorithm=SHA1&digits=6&period=30',
   accountEmail: 'admin@7tasker.com',
   issuer: 'JoyfulDays Admin',
-  hardwareSecurityPin: '784920',
+  hardwareSecurityPin: '******',
   preferredMethod: 'authenticator_app',
   enforceIpBinding: false,
   sessionTimeoutMinutes: 60,

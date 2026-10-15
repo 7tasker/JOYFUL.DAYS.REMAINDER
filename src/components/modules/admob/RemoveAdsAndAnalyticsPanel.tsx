@@ -24,6 +24,12 @@ import {
   Copy,
   Receipt,
   ExternalLink,
+  Download,
+  Calendar,
+  Clock,
+  FileSpreadsheet,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { authorizedFetch } from '../../../services/apiClient';
 import {
@@ -36,6 +42,9 @@ import {
   addDoc,
   serverTimestamp,
 } from '../../../services/firebase';
+
+import { firestoreSync } from '../../../services/firestoreSyncService';
+import { CanonicalUserDashboardRecord, StripeTransactionRecord } from '../../../types';
 
 interface RemoveAdsConfig {
   enabled: boolean;
@@ -69,9 +78,17 @@ interface AnalyticsSummary {
 export interface UserMonetizationRecord {
   uid: string;
   userEmail: string;
+  country?: string;
+  state?: string;
   adsWatchedCount: number; // 0 to 3
+  rewardAdsRequired: number;
   isUnlocked: boolean;
+  hasAdDiscrepancy?: boolean;
+  adDiscrepancyNote?: string;
   removeAdsLifetime: boolean;
+  hasProDiscrepancy?: boolean;
+  proDiscrepancyNote?: string;
+  verificationStatus: 'Payment Verified' | 'Evidence recorded — unverified' | 'No payment recorded' | 'Unverified / Client Flag';
   transactionId?: string | null;
   paymentIntentId?: string | null;
   amountPaid?: number | null;
@@ -80,6 +97,7 @@ export interface UserMonetizationRecord {
   purchasedAt?: string | null;
   lastUpdatedAt: string;
   unlockedAt?: string | null;
+  canonicalRecord?: CanonicalUserDashboardRecord;
 }
 
 export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
@@ -114,6 +132,127 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
 
   // Receipt Modal State (Option B)
   const [receiptUser, setReceiptUser] = useState<UserMonetizationRecord | null>(null);
+
+  // Stripe Transactions Ledger State
+  const [stripeTxns, setStripeTxns] = useState<StripeTransactionRecord[]>([]);
+  const [stripeTxnsLoading, setStripeTxnsLoading] = useState<boolean>(false);
+  const [stripeTxnSearch, setStripeTxnSearch] = useState<string>('');
+  const [stripeTxnStatusFilter, setStripeTxnStatusFilter] = useState<string>('all');
+  const [stripeTxnDatePreset, setStripeTxnDatePreset] = useState<'all' | '24h' | '7d' | '30d' | 'custom'>('all');
+  const [stripeTxnCustomStartDate, setStripeTxnCustomStartDate] = useState<string>('');
+  const [stripeTxnCustomEndDate, setStripeTxnCustomEndDate] = useState<string>('');
+  const [stripeCurrencyTotals, setStripeCurrencyTotals] = useState<Record<string, { count: number; grossAmount: number; formattedGross: string }>>({});
+  const [selectedStripeTxn, setSelectedStripeTxn] = useState<StripeTransactionRecord | null>(null);
+  const [stripeTxnPage, setStripeTxnPage] = useState<number>(1);
+  const [stripeTxnPageSize, setStripeTxnPageSize] = useState<number>(10);
+
+  const fetchStripeTransactions = async () => {
+    setStripeTxnsLoading(true);
+    try {
+      let url = `/api/stripe/transactions?limit=100`;
+      if (stripeTxnStatusFilter !== 'all') {
+        url += `&status=${encodeURIComponent(stripeTxnStatusFilter)}`;
+      }
+      if (stripeTxnSearch.trim()) {
+        url += `&search=${encodeURIComponent(stripeTxnSearch.trim())}`;
+      }
+
+      let startIso: string | undefined = undefined;
+      let endIso: string | undefined = undefined;
+      const now = new Date();
+
+      if (stripeTxnDatePreset === '24h') {
+        startIso = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+      } else if (stripeTxnDatePreset === '7d') {
+        startIso = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      } else if (stripeTxnDatePreset === '30d') {
+        startIso = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      } else if (stripeTxnDatePreset === 'custom') {
+        if (stripeTxnCustomStartDate) startIso = new Date(stripeTxnCustomStartDate).toISOString();
+        if (stripeTxnCustomEndDate) endIso = new Date(stripeTxnCustomEndDate + 'T23:59:59').toISOString();
+      }
+
+      if (startIso) url += `&startDate=${encodeURIComponent(startIso)}`;
+      if (endIso) url += `&endDate=${encodeURIComponent(endIso)}`;
+
+      const res = await authorizedFetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.transactions)) {
+          setStripeTxns(data.transactions);
+          if (data.summary?.currencyTotals) {
+            setStripeCurrencyTotals(data.summary.currencyTotals);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[Stripe Ledger] Failed to fetch transactions:', err);
+    } finally {
+      setStripeTxnsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStripeTransactions();
+  }, [stripeTxnStatusFilter, stripeTxnDatePreset, stripeTxnCustomStartDate, stripeTxnCustomEndDate]);
+
+  const exportStripeTxnsCsv = () => {
+    if (!filteredStripeTxns || filteredStripeTxns.length === 0) return;
+    const headers = [
+      'Date',
+      'Time (Timezone)',
+      'Customer Email',
+      'Firebase UID',
+      'Checkout Session ID',
+      'Payment Intent ID',
+      'Charge ID',
+      'Stripe Customer ID',
+      'Amount',
+      'Currency',
+      'Payment Status',
+      'Checkout Status',
+      'Payment Method',
+      'Refund Status',
+      'Refunded Amount',
+      'Source',
+      'Stripe Event ID',
+    ];
+
+    const userTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+    const rows = filteredStripeTxns.map((t) => {
+      const d = new Date(t.stripeEventTimestamp || t.createdAt || Date.now());
+      return [
+        d.toISOString().substring(0, 10),
+        `"${d.toLocaleTimeString()} (${userTz})"`,
+        `"${t.customerEmail || ''}"`,
+        `"${t.uid || ''}"`,
+        `"${t.checkoutSessionId || ''}"`,
+        `"${t.paymentIntentId || ''}"`,
+        `"${t.chargeId || ''}"`,
+        `"${t.stripeCustomerId || ''}"`,
+        (t.amount / 100).toFixed(2),
+        t.currency,
+        t.paymentStatus,
+        t.checkoutStatus || '',
+        t.paymentMethodType || 'card',
+        t.refundStatus || 'none',
+        ((t.refundedAmount || 0) / 100).toFixed(2),
+        t.source || 'STRIPE_VERIFIED_WEBHOOK',
+        `"${t.stripeEventId || t.id}"`,
+      ];
+    });
+
+    const csvContent = [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `stripe_transactions_ledger_${new Date().toISOString().substring(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const handleInitCollections = async () => {
     setInitializingCollections(true);
@@ -228,110 +367,37 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
       (err) => console.warn('[Analytics] Overview summary notice:', err?.message)
     );
 
-    // 3. Option B: Listen directly to analytics/monetization_stats/users collection
-    const unsubMonetizationUsers = onSnapshot(
-      collection(db, 'analytics/monetization_stats/users'),
-      (snap) => {
-        const records: UserMonetizationRecord[] = [];
-        snap.forEach((docSnap) => {
-          const d = docSnap.data();
-          records.push({
-            uid: d.uid || docSnap.id,
-            userEmail: d.userEmail || `${docSnap.id}@joyfuldays.app`,
-            adsWatchedCount: Math.min(3, Math.max(0, Number(d.adsWatchedCount || 0))),
-            isUnlocked: Boolean(d.isUnlocked || d.removeAdsLifetime || Number(d.adsWatchedCount || 0) >= 3),
-            removeAdsLifetime: Boolean(d.removeAdsLifetime),
-            transactionId: d.transactionId || d.removeAdsStripeSessionId || null,
-            paymentIntentId: d.paymentIntentId || null,
-            amountPaid: d.amountPaid || null,
-            amountFormatted: d.amountFormatted || (d.removeAdsLifetime ? '$1.00 USD' : null),
-            currency: d.currency || 'USD',
-            purchasedAt: d.purchasedAt || null,
-            lastUpdatedAt: d.lastUpdatedAt
-              ? typeof d.lastUpdatedAt === 'string'
-                ? d.lastUpdatedAt
-                : new Date(d.lastUpdatedAt.seconds * 1000).toISOString()
-              : new Date().toISOString(),
-            unlockedAt: d.unlockedAt
-              ? typeof d.unlockedAt === 'string'
-                ? d.unlockedAt
-                : new Date(d.unlockedAt.seconds * 1000).toISOString()
-              : null,
-          });
-        });
+    // 3. Subscribe directly to firestoreSync live canonical user records
+    const unsubCanonicalUsers = firestoreSync.subscribeUsers((liveUsers: CanonicalUserDashboardRecord[]) => {
+      const records: UserMonetizationRecord[] = liveUsers.map((u) => ({
+        uid: u.id,
+        userEmail: u.email,
+        country: u.country,
+        state: u.state,
+        adsWatchedCount: u.advancedFeatures.adsWatched,
+        rewardAdsRequired: u.advancedFeatures.rewardAdsRequired,
+        isUnlocked: u.advancedFeatures.unlocked,
+        hasAdDiscrepancy: u.advancedFeatures.hasAdDiscrepancy,
+        adDiscrepancyNote: u.advancedFeatures.adDiscrepancyNote,
+        removeAdsLifetime: u.isPro,
+        hasProDiscrepancy: u.hasProDiscrepancy,
+        proDiscrepancyNote: u.proDiscrepancyNote,
+        verificationStatus: u.paymentEvidence.verificationStatus,
+        transactionId: u.paymentEvidence.transactionId || null,
+        paymentIntentId: u.paymentEvidence.paymentIntentId || null,
+        amountPaid: u.paymentEvidence.amountPaid || null,
+        amountFormatted: u.paymentEvidence.amountFormatted || null,
+        currency: u.paymentEvidence.currency || 'USD',
+        purchasedAt: u.paymentEvidence.purchasedAt || null,
+        lastUpdatedAt: u.lastActive,
+        unlockedAt: u.advancedFeatures.unlocked ? u.lastActive : null,
+        canonicalRecord: u,
+      }));
 
-        if (records.length > 0) {
-          setMonetizationUsers(records);
-          const unlocks = records.filter((r) => r.isUnlocked).length;
-          setTotalOverviewUnlocks((prev) => Math.max(prev, unlocks));
-        }
-      },
-      (err) => console.warn('[Analytics] Monetization Users notice:', err?.message)
-    );
-
-    // 4. Fallback listener on users/{uid}/settings/preferences (collectionGroup)
-    const unsubPreferences = onSnapshot(
-      collectionGroup(db, 'preferences'),
-      (snap) => {
-        const prefRecords: UserMonetizationRecord[] = [];
-        snap.forEach((pDoc) => {
-          const path = pDoc.ref.path;
-          const match = path.match(/^users\/([^/]+)\/settings\/preferences/);
-          if (match && match[1]) {
-            const uid = match[1];
-            const pData = pDoc.data() || {};
-            const adsWatched = Math.min(3, Math.max(0, Number(pData.advancedFeaturesRewardAdsWatched || 0)));
-            const unlocked = Boolean(pData.advancedFeaturesUnlocked || pData.removeAdsLifetime || adsWatched >= 3);
-
-            prefRecords.push({
-              uid,
-              userEmail: pData.userEmail || pData.email || `${uid}@joyfuldays.app`,
-              adsWatchedCount: adsWatched,
-              isUnlocked: unlocked,
-              removeAdsLifetime: Boolean(pData.removeAdsLifetime),
-              transactionId: pData.transactionId || pData.removeAdsStripeSessionId || null,
-              paymentIntentId: pData.paymentIntentId || null,
-              amountPaid: pData.amountPaid || null,
-              amountFormatted: pData.amountFormatted || (pData.removeAdsLifetime ? '$1.00 USD' : null),
-              currency: pData.currency || 'USD',
-              purchasedAt: pData.purchasedAt || (pData.removeAdsPurchasedAt ? new Date(pData.removeAdsPurchasedAt).toISOString() : null),
-              lastUpdatedAt: pData.updatedAt
-                ? typeof pData.updatedAt === 'string'
-                  ? pData.updatedAt
-                  : new Date(pData.updatedAt.seconds * 1000).toISOString()
-                : new Date().toISOString(),
-              unlockedAt: unlocked ? new Date().toISOString() : null,
-            });
-          }
-        });
-
-        if (prefRecords.length > 0) {
-          setMonetizationUsers((prev) => {
-            const map = new Map<string, UserMonetizationRecord>();
-            prev.forEach((r) => map.set(r.uid, r));
-            prefRecords.forEach((r) => {
-              if (!map.has(r.uid)) {
-                map.set(r.uid, r);
-              } else {
-                // Enrich existing record with Option B transaction details if present in preferences
-                const existing = map.get(r.uid)!;
-                map.set(r.uid, {
-                  ...existing,
-                  transactionId: existing.transactionId || r.transactionId,
-                  paymentIntentId: existing.paymentIntentId || r.paymentIntentId,
-                  amountPaid: existing.amountPaid || r.amountPaid,
-                  amountFormatted: existing.amountFormatted || r.amountFormatted,
-                  currency: existing.currency || r.currency,
-                  purchasedAt: existing.purchasedAt || r.purchasedAt,
-                });
-              }
-            });
-            return Array.from(map.values());
-          });
-        }
-      },
-      (err) => console.warn('[Analytics] Preferences fallback notice:', err?.message)
-    );
+      setMonetizationUsers(records);
+      const unlocks = records.filter((r) => r.isUnlocked).length;
+      setTotalOverviewUnlocks((prev) => Math.max(prev, unlocks));
+    });
 
     const timer = setInterval(() => {
       loadData();
@@ -340,8 +406,7 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
     return () => {
       unsubRemoveAds();
       unsubOverview();
-      unsubMonetizationUsers();
-      unsubPreferences();
+      unsubCanonicalUsers();
       clearInterval(timer);
     };
   }, []);
@@ -479,9 +544,32 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
     if (statusFilter === 'all') return true;
     if (statusFilter === 'unlocked') return u.isUnlocked;
     if (statusFilter === 'locked') return !u.isUnlocked;
-    if (statusFilter === 'remove_ads') return u.removeAdsLifetime;
     return true;
   });
+
+  // Filtered Stripe Transactions Ledger
+  const filteredStripeTxns = stripeTxns.filter((t) => {
+    const q = stripeTxnSearch.toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      (t.customerEmail && t.customerEmail.toLowerCase().includes(q)) ||
+      (t.uid && t.uid.toLowerCase().includes(q)) ||
+      (t.checkoutSessionId && t.checkoutSessionId.toLowerCase().includes(q)) ||
+      (t.paymentIntentId && t.paymentIntentId.toLowerCase().includes(q)) ||
+      (t.stripeEventId && t.stripeEventId.toLowerCase().includes(q));
+
+    const matchesStatus =
+      stripeTxnStatusFilter === 'all' ||
+      t.paymentStatus.toLowerCase() === stripeTxnStatusFilter.toLowerCase();
+
+    return matchesSearch && matchesStatus;
+  });
+
+  const totalStripePages = Math.max(1, Math.ceil(filteredStripeTxns.length / stripeTxnPageSize));
+  const paginatedStripeTxns = filteredStripeTxns.slice(
+    (stripeTxnPage - 1) * stripeTxnPageSize,
+    stripeTxnPage * stripeTxnPageSize
+  );
 
   return (
     <div className="space-y-6" id="remove-ads-analytics-panel">
@@ -640,6 +728,322 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
         </div>
       </div>
 
+      {/* ================= STRIPE TRANSACTIONS HISTORY LEDGER (stripe_transactions) ================= */}
+      <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
+          <div>
+            <h3 className="font-bold text-white text-base flex items-center gap-2">
+              <Receipt className="w-5 h-5 text-emerald-400" />
+              <span>Stripe Transactions History Ledger (stripe_transactions)</span>
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Chronological Stripe Webhook event stream with payment reference IDs, timestamps, amounts, currencies, and verification metadata.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={exportStripeTxnsCsv}
+              disabled={filteredStripeTxns.length === 0}
+              className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+              title="Export filtered transactions to CSV"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export CSV</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={fetchStripeTransactions}
+              disabled={stripeTxnsLoading}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Refresh ledger records"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${stripeTxnsLoading ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Currency Gross Totals Summary Row */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+            <span className="text-[10px] text-slate-400 uppercase font-semibold block">Total Transactions</span>
+            <p className="text-lg font-bold font-mono text-white">{filteredStripeTxns.length}</p>
+          </div>
+
+          {Object.keys(stripeCurrencyTotals).length > 0 ? (
+            Object.entries(stripeCurrencyTotals).map(([curr, stat]: [string, { count: number; grossAmount: number; formattedGross: string }]) => (
+              <div key={curr} className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-[10px] text-slate-400 uppercase font-semibold block">{curr} Gross Total</span>
+                <p className="text-lg font-bold font-mono text-emerald-400">
+                  {stat.formattedGross || `$${(stat.grossAmount / 100).toFixed(2)} ${curr}`}
+                </p>
+                <span className="text-[10px] text-slate-500 block">{stat.count} successful payment(s)</span>
+              </div>
+            ))
+          ) : (
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1 sm:col-span-3">
+              <span className="text-[10px] text-slate-400 uppercase font-semibold block">Verified Revenue</span>
+              <p className="text-sm font-bold font-mono text-slate-400">No verified payments in selected view</p>
+            </div>
+          )}
+        </div>
+
+        {/* Filter Controls Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-slate-950 border border-slate-800/80 text-xs">
+          {/* Preset Date Filter */}
+          <div className="flex items-center gap-1">
+            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-slate-400 font-medium mr-1">Timeframe:</span>
+            {(['all', '24h', '7d', '30d', 'custom'] as const).map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                onClick={() => {
+                  setStripeTxnDatePreset(preset);
+                  setStripeTxnPage(1);
+                }}
+                className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer text-[11px] ${
+                  stripeTxnDatePreset === preset
+                    ? 'bg-indigo-600 text-white font-bold'
+                    : 'bg-slate-900 text-slate-400 hover:text-white'
+                }`}
+              >
+                {preset === 'all'
+                  ? 'All Time'
+                  : preset === '24h'
+                  ? 'Last 24h'
+                  : preset === '7d'
+                  ? 'Last 7d'
+                  : preset === '30d'
+                  ? 'Last 30d'
+                  : 'Custom'}
+              </button>
+            ))}
+          </div>
+
+          {stripeTxnDatePreset === 'custom' && (
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={stripeTxnCustomStartDate}
+                onChange={(e) => setStripeTxnCustomStartDate(e.target.value)}
+                className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-white text-[11px]"
+              />
+              <span className="text-slate-500">to</span>
+              <input
+                type="date"
+                value={stripeTxnCustomEndDate}
+                onChange={(e) => setStripeTxnCustomEndDate(e.target.value)}
+                className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-white text-[11px]"
+              />
+            </div>
+          )}
+
+          {/* Search & Status Filter */}
+          <div className="flex items-center gap-2 flex-1 max-w-md justify-end">
+            <div className="relative flex-1">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={stripeTxnSearch}
+                onChange={(e) => {
+                  setStripeTxnSearch(e.target.value);
+                  setStripeTxnPage(1);
+                }}
+                placeholder="Search reference ID, email, or UID..."
+                className="w-full pl-8 pr-3 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+            </div>
+
+            <select
+              value={stripeTxnStatusFilter}
+              onChange={(e) => {
+                setStripeTxnStatusFilter(e.target.value);
+                setStripeTxnPage(1);
+              }}
+              className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white font-medium"
+            >
+              <option value="all">All Statuses</option>
+              <option value="paid">Paid / Succeeded</option>
+              <option value="unpaid">Pending / Unpaid</option>
+              <option value="failed">Failed</option>
+              <option value="refunded">Refunded</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Stripe Transactions Table */}
+        <div className="overflow-x-auto rounded-xl border border-slate-800/80">
+          <table className="w-full text-left text-xs text-slate-300">
+            <thead className="bg-slate-950/80 text-slate-400 text-[11px] uppercase tracking-wider font-semibold border-b border-slate-800">
+              <tr>
+                <th className="p-3.5">Date</th>
+                <th className="p-3.5">Time (Timezone)</th>
+                <th className="p-3.5">Customer</th>
+                <th className="p-3.5">Reference ID</th>
+                <th className="p-3.5">Amount</th>
+                <th className="p-3.5">Status</th>
+                <th className="p-3.5">Payment Method</th>
+                <th className="p-3.5 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/80 bg-slate-950/40">
+              {paginatedStripeTxns.length > 0 ? (
+                paginatedStripeTxns.map((t) => {
+                  const evtDate = new Date(t.stripeEventTimestamp || t.createdAt || Date.now());
+                  const formattedDate = evtDate.toISOString().substring(0, 10);
+                  const formattedTime = evtDate.toLocaleTimeString();
+                  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+                  const isPaid = t.paymentStatus === 'paid' || t.paymentStatus === 'succeeded' || t.paymentStatus === 'complete';
+                  const isRefunded = t.paymentStatus === 'refunded' || t.refundStatus === 'refunded';
+                  const isFailed = t.paymentStatus === 'failed';
+
+                  return (
+                    <tr key={t.id} className="hover:bg-slate-800/30 transition-colors">
+                      {/* Col 1: Date */}
+                      <td className="p-3.5 font-mono text-[11px] text-slate-200">
+                        {formattedDate}
+                      </td>
+
+                      {/* Col 2: Time with Timezone */}
+                      <td className="p-3.5 font-mono text-[11px] text-slate-400">
+                        <div className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-slate-500" />
+                          <span>{formattedTime}</span>
+                          <span className="text-[9px] text-slate-500 font-sans">({tz})</span>
+                        </div>
+                      </td>
+
+                      {/* Col 3: Customer Email & UID */}
+                      <td className="p-3.5 font-semibold text-white">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="truncate max-w-[160px]" title={t.customerEmail || 'Unassigned'}>
+                            {t.customerEmail || 'Unassigned Email'}
+                          </span>
+                          <span className="font-mono text-[10px] text-slate-500 truncate max-w-[140px]" title={t.uid || 'N/A'}>
+                            UID: {t.uid || 'N/A'}
+                          </span>
+                        </div>
+                      </td>
+
+                      {/* Col 4: Reference ID */}
+                      <td className="p-3.5 font-mono text-[11px] text-indigo-300">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedStripeTxn(t)}
+                            className="hover:underline truncate max-w-[140px] text-left cursor-pointer font-mono"
+                            title={`Click to view details for ${t.checkoutSessionId || t.paymentIntentId || t.id}`}
+                          >
+                            {t.checkoutSessionId || t.paymentIntentId || t.stripeEventId}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => copyTxnId(t.checkoutSessionId || t.paymentIntentId || t.id)}
+                            className="p-1 hover:bg-slate-800 rounded text-slate-400 hover:text-white transition-colors cursor-pointer"
+                            title="Copy Reference ID"
+                          >
+                            {copiedTxnId === (t.checkoutSessionId || t.paymentIntentId || t.id) ? (
+                              <Check className="w-3 h-3 text-emerald-400" />
+                            ) : (
+                              <Copy className="w-3 h-3" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+
+                      {/* Col 5: Amount */}
+                      <td className="p-3.5 font-mono font-bold text-xs text-white">
+                        {t.amountFormatted || `$${(t.amount / 100).toFixed(2)} ${t.currency}`}
+                      </td>
+
+                      {/* Col 6: Status */}
+                      <td className="p-3.5">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            isPaid
+                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              : isRefunded
+                              ? 'bg-purple-500/15 text-purple-300 border-purple-500/30'
+                              : isFailed
+                              ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                              : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                          }`}
+                        >
+                          {t.paymentStatus.toUpperCase()}
+                        </span>
+                      </td>
+
+                      {/* Col 7: Payment Method */}
+                      <td className="p-3.5 font-mono text-[11px] text-slate-400">
+                        <span className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded text-[10px] uppercase">
+                          {t.paymentMethodType || 'card'}
+                        </span>
+                      </td>
+
+                      {/* Col 8: Action */}
+                      <td className="p-3.5 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedStripeTxn(t)}
+                          className="px-2.5 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[11px] font-semibold transition-colors cursor-pointer"
+                        >
+                          View Details
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center text-slate-400">
+                    <Receipt className="w-8 h-8 mx-auto mb-2 text-slate-600" />
+                    <p className="text-sm font-semibold text-slate-300">No Stripe transactions found</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      No webhook transaction logs match the current filters.
+                    </p>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination Bar */}
+        <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs text-slate-400">
+          <div>
+            Showing <strong className="text-slate-200">{paginatedStripeTxns.length}</strong> of{' '}
+            <strong className="text-slate-200">{filteredStripeTxns.length}</strong> transactions
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setStripeTxnPage((p) => Math.max(1, p - 1))}
+              disabled={stripeTxnPage === 1}
+              className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="font-mono text-slate-300">
+              Page {stripeTxnPage} of {totalStripePages}
+            </span>
+            <button
+              type="button"
+              onClick={() => setStripeTxnPage((p) => Math.min(totalStripePages, p + 1))}
+              disabled={stripeTxnPage >= totalStripePages}
+              className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-300 hover:text-white disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* ================= USER MONETIZATION & OPTION B TRANSACTION TABLE ================= */}
       <div className="p-6 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl space-y-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-3 border-b border-slate-800">
@@ -702,23 +1106,42 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
                     <tr key={user.uid} className="hover:bg-slate-800/30 transition-colors">
                       {/* Col 1: Email */}
                       <td className="p-3.5 font-semibold text-white">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate max-w-[180px]" title={user.userEmail}>
-                            {user.userEmail}
-                          </span>
-                          {user.removeAdsLifetime && (
-                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
-                              PRO
+                        <div className="flex flex-col gap-1 items-start">
+                          <div className="flex items-center gap-2">
+                            <span className="truncate max-w-[180px]" title={user.userEmail}>
+                              {user.userEmail}
+                            </span>
+                            {user.removeAdsLifetime ? (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 shrink-0">
+                                PRO
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono text-slate-500 shrink-0">
+                                NO_PRO
+                              </span>
+                            )}
+                          </div>
+                          {user.hasProDiscrepancy && (
+                            <span
+                              className="px-1.5 py-0.2 rounded text-[8px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 cursor-help"
+                              title={user.proDiscrepancyNote}
+                            >
+                              ⚠️ Analytics claim — unverified
                             </span>
                           )}
                         </div>
                       </td>
 
-                      {/* Col 2: UID */}
+                      {/* Col 2: UID & Location */}
                       <td className="p-3.5 font-mono text-[11px] text-slate-400">
-                        <span className="truncate max-w-[120px] inline-block font-mono" title={user.uid}>
+                        <span className="truncate max-w-[120px] block font-mono text-slate-300" title={user.uid}>
                           {user.uid}
                         </span>
+                        {user.country && (
+                          <span className="text-[10px] text-rose-300 block">
+                            📍 {user.country}
+                          </span>
+                        )}
                       </td>
 
                       {/* Col 3: Option B Stripe Transaction / Order ID */}
@@ -752,28 +1175,35 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
                         )}
                       </td>
 
-                      {/* Col 4: Option B Amount Paid */}
+                      {/* Col 4: Amount Paid & Verification Status */}
                       <td className="p-3.5">
-                        {user.removeAdsLifetime || user.amountPaid || user.amountFormatted ? (
-                          <span className="px-2 py-0.5 rounded font-mono font-bold text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            {user.amountFormatted || (user.amountPaid ? `$${(user.amountPaid / 100).toFixed(2)} USD` : '$1.00 USD')}
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold border ${
+                            user.verificationStatus === 'Payment Verified'
+                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              : user.verificationStatus === 'Evidence recorded — unverified' || user.verificationStatus === 'Unverified / Client Flag'
+                              ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                              : 'bg-slate-800 text-slate-500 border-slate-700'
+                          }`}>
+                            {user.verificationStatus}
                           </span>
-                        ) : (
-                          <span className="text-slate-500 text-xs font-mono">$0.00 (Ad Watch)</span>
-                        )}
+                          <span className="font-mono font-bold text-xs text-slate-200">
+                            {user.amountFormatted || (user.amountPaid ? `$${(user.amountPaid / 100).toFixed(2)} USD` : '$0.00')}
+                          </span>
+                        </div>
                       </td>
 
                       {/* Col 5: Ads Watched */}
                       <td className="p-3.5">
-                        <div className="space-y-1.5 min-w-[120px]">
+                        <div className="space-y-1 min-w-[120px]">
                           <div className="flex items-center justify-between text-[11px] font-mono">
-                            <span className="text-slate-300 font-bold">{user.adsWatchedCount} / 3 Ads</span>
+                            <span className="text-slate-300 font-bold">{user.adsWatchedCount} / {user.rewardAdsRequired || 3} Ads</span>
                             <span className="text-slate-500">{watchedPct}%</span>
                           </div>
                           <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
                             <div
                               className={`h-full transition-all ${
-                                user.adsWatchedCount >= 3
+                                user.adsWatchedCount >= (user.rewardAdsRequired || 3)
                                   ? 'bg-emerald-400'
                                   : user.adsWatchedCount === 2
                                   ? 'bg-indigo-400'
@@ -784,6 +1214,14 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
                               style={{ width: `${watchedPct}%` }}
                             />
                           </div>
+                          {user.hasAdDiscrepancy && (
+                            <div
+                              className="text-[8px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 py-0.2 rounded inline-block cursor-help"
+                              title={user.adDiscrepancyNote}
+                            >
+                              ⚠️ Analytics 3/3 (Reconciliation needed)
+                            </div>
+                          )}
                         </div>
                       </td>
 
@@ -934,6 +1372,139 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
                 className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs"
               >
                 Close Receipt
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Comprehensive Stripe Transaction Detail Modal */}
+      {selectedStripeTxn && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-5 h-5 text-emerald-400" />
+                <h3 className="font-bold text-white text-sm">Stripe Ledger Transaction Details</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedStripeTxn(null)}
+                className="text-slate-400 hover:text-white text-xs font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2 font-mono text-[11px]">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-900">
+                  <span className="text-slate-400">Verification Source:</span>
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30 text-[10px]">
+                    {selectedStripeTxn.source || 'STRIPE_VERIFIED_WEBHOOK'}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Firebase UID:</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-white font-bold">{selectedStripeTxn.uid || 'Unassigned'}</span>
+                    {selectedStripeTxn.uid && (
+                      <button
+                        type="button"
+                        onClick={() => copyTxnId(selectedStripeTxn.uid!)}
+                        className="p-0.5 text-slate-400 hover:text-white cursor-pointer"
+                        title="Copy UID"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Customer Email:</span>
+                  <span className="text-white">{selectedStripeTxn.customerEmail || 'N/A'}</span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Stripe Customer ID:</span>
+                  <span className="text-slate-300">{selectedStripeTxn.stripeCustomerId || 'N/A'}</span>
+                </div>
+
+                <div className="flex justify-between items-center pt-2 border-t border-slate-900">
+                  <span className="text-slate-400">Checkout Session ID:</span>
+                  <span className="text-indigo-300 font-bold">{selectedStripeTxn.checkoutSessionId || 'N/A'}</span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Payment Intent ID:</span>
+                  <span className="text-indigo-300 font-bold">{selectedStripeTxn.paymentIntentId || 'N/A'}</span>
+                </div>
+
+                {selectedStripeTxn.chargeId && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Charge ID:</span>
+                    <span className="text-slate-300">{selectedStripeTxn.chargeId}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center pt-2 border-t border-slate-900">
+                  <span className="text-slate-400">Payment Amount:</span>
+                  <span className="text-emerald-400 font-bold text-sm">
+                    {selectedStripeTxn.amountFormatted || `$${(selectedStripeTxn.amount / 100).toFixed(2)} ${selectedStripeTxn.currency}`}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Payment Status:</span>
+                  <span className="text-white font-bold uppercase">{selectedStripeTxn.paymentStatus}</span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Checkout Session Status:</span>
+                  <span className="text-slate-300">{selectedStripeTxn.checkoutStatus || 'complete'}</span>
+                </div>
+
+                <div className="flex justify-between items-center pt-2 border-t border-slate-900">
+                  <span className="text-slate-400">Payment Date & Time:</span>
+                  <span className="text-slate-300">
+                    {new Date(selectedStripeTxn.stripeEventTimestamp || selectedStripeTxn.createdAt || Date.now()).toLocaleString()} ({Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'})
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-400">Stripe Event ID:</span>
+                  <span className="text-slate-400 text-[10px]">{selectedStripeTxn.stripeEventId || selectedStripeTxn.id}</span>
+                </div>
+
+                {selectedStripeTxn.refundStatus && selectedStripeTxn.refundStatus !== 'none' && (
+                  <div className="p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 text-[11px] space-y-1 mt-2">
+                    <div className="flex justify-between">
+                      <span>Refund Status:</span>
+                      <strong className="uppercase">{selectedStripeTxn.refundStatus}</strong>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Refunded Amount:</span>
+                      <strong>${((selectedStripeTxn.refundedAmount || 0) / 100).toFixed(2)} {selectedStripeTxn.currency}</strong>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-[11px] flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Verified Stripe Webhook Ledger Event (`stripe_transactions/{selectedStripeTxn.stripeEventId}`)</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedStripeTxn(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs cursor-pointer"
+              >
+                Close Details
               </button>
             </div>
           </div>

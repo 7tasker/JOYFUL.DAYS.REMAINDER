@@ -12,7 +12,30 @@ export const SESSION_EXPIRED_EVENT = 'joyful_admin_session_expired';
 // Cryptographic proof required by Firestore security rules for authorized admin writes
 export const ADMIN_AUTH_SIGNATURE = 'jd_sec_proof_935631ae_7tasker_admin_auth';
 
+const LOCK_KEY = 'joyful_admin_locked';
+
 export const AdminSessionService = {
+  isLocked(): boolean {
+    try {
+      if (typeof window === 'undefined') return false;
+      return localStorage.getItem(LOCK_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  },
+
+  setLocked(locked: boolean): void {
+    try {
+      if (typeof window !== 'undefined') {
+        if (locked) {
+          localStorage.setItem(LOCK_KEY, 'true');
+        } else {
+          localStorage.removeItem(LOCK_KEY);
+        }
+      }
+    } catch {}
+  },
+
   saveSession(session: AdminSession): void {
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify(session));
@@ -58,6 +81,7 @@ export const AdminSessionService = {
         localStorage.removeItem(SESSION_KEY);
         localStorage.removeItem('joyful_admin_user');
         localStorage.removeItem('joyful_admin_session_v1');
+        localStorage.removeItem(LOCK_KEY);
       }
     } catch {}
   },

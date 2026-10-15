@@ -28,6 +28,8 @@ import {
   Trash2,
   Activity,
   Info,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { UserAccount, CelebrationEvent } from '../../types';
 import { StorageService } from '../../services/storageService';
@@ -45,9 +47,12 @@ export const CelebrationsModule: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [tierFilter, setTierFilter] = useState<string>('all');
+  const [proFilter, setProFilter] = useState<string>('all');
+  const [advFeaturesFilter, setAdvFeaturesFilter] = useState<string>('all');
 
   const [selectedCelebration, setSelectedCelebration] = useState<CelebrationEvent | null>(null);
   const [selectedUser, setSelectedUser] = useState<UserAccount | null>(null);
+  const [copiedUid, setCopiedUid] = useState<string | null>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState(false);
   const [isSubmittingEvent, setIsSubmittingEvent] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
@@ -148,6 +153,12 @@ export const CelebrationsModule: React.FC = () => {
     setTimeout(() => setFeedbackMsg(null), 3000);
   };
 
+  const handleCopyUid = (uid: string) => {
+    navigator.clipboard.writeText(uid);
+    setCopiedUid(uid);
+    setTimeout(() => setCopiedUid(null), 2000);
+  };
+
   // Filtered Celebrations
   const filteredCelebrations = celebrations.filter((c) => {
     const matchesSearch =
@@ -162,14 +173,34 @@ export const CelebrationsModule: React.FC = () => {
 
   // Filtered Users
   const filteredUsers = users.filter((u) => {
+    const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
-      u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.country.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.id.toLowerCase().includes(searchQuery.toLowerCase());
+      !q ||
+      u.name.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      u.id.toLowerCase().includes(q) ||
+      u.country.toLowerCase().includes(q) ||
+      (u.state && u.state.toLowerCase().includes(q)) ||
+      (u.countryCode && u.countryCode.toLowerCase().includes(q)) ||
+      (u.stateCode && u.stateCode.toLowerCase().includes(q)) ||
+      (u.paymentEvidence?.transactionId && u.paymentEvidence.transactionId.toLowerCase().includes(q)) ||
+      (u.paymentEvidence?.paymentIntentId && u.paymentEvidence.paymentIntentId.toLowerCase().includes(q)) ||
+      (u.paymentEvidence?.stripeSessionId && u.paymentEvidence.stripeSessionId.toLowerCase().includes(q));
+
     const matchesStatus = statusFilter === 'all' || u.status === statusFilter;
     const matchesTier = tierFilter === 'all' || u.loyaltyTier === tierFilter;
-    return matchesSearch && matchesStatus && matchesTier;
+    const matchesPro =
+      proFilter === 'all' ||
+      (proFilter === 'pro' && u.isPro) ||
+      (proFilter === 'no_pro' && !u.isPro) ||
+      (proFilter === 'unverified_pro' && u.isPro && u.paymentEvidence?.verificationStatus !== 'Payment Verified');
+
+    const matchesAdvFeatures =
+      advFeaturesFilter === 'all' ||
+      (advFeaturesFilter === 'unlocked' && u.advancedFeatures?.unlocked) ||
+      (advFeaturesFilter === 'locked' && !u.advancedFeatures?.unlocked);
+
+    return matchesSearch && matchesStatus && matchesTier && matchesPro && matchesAdvFeatures;
   });
 
   return (
@@ -572,7 +603,7 @@ export const CelebrationsModule: React.FC = () => {
               <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
               <input
                 type="text"
-                placeholder="Search member name, email, or country..."
+                placeholder="Search name, email, location, UID, or transaction ID..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-rose-500"
@@ -580,6 +611,27 @@ export const CelebrationsModule: React.FC = () => {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={proFilter}
+                onChange={(e) => setProFilter(e.target.value)}
+                className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-200"
+              >
+                <option value="all">All Entitlement Statuses</option>
+                <option value="pro">PRO Only ⚡</option>
+                <option value="no_pro">NO_PRO Only</option>
+                <option value="unverified_pro">Unverified / Client PRO ⚠️</option>
+              </select>
+
+              <select
+                value={advFeaturesFilter}
+                onChange={(e) => setAdvFeaturesFilter(e.target.value)}
+                className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-200"
+              >
+                <option value="all">All Advanced Features</option>
+                <option value="unlocked">Unlocked Features 🔓</option>
+                <option value="locked">Locked Features 🔒</option>
+              </select>
+
               <select
                 value={tierFilter}
                 onChange={(e) => setTierFilter(e.target.value)}
@@ -608,106 +660,206 @@ export const CelebrationsModule: React.FC = () => {
 
           {/* Users Table */}
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left text-xs min-w-[950px]">
               <thead>
                 <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[10px] bg-slate-950/40">
                   <th className="p-3.5">User Identity</th>
-                  <th className="p-3.5">Loyalty Tier</th>
-                  <th className="p-3.5">Status</th>
-                  <th className="p-3.5">Celebrations Hosted</th>
-                  <th className="p-3.5">Gifts Sent</th>
-                  <th className="p-3.5">Total Gift Volume</th>
-                  <th className="p-3.5">Country</th>
-                  <th className="p-3.5 text-right">Moderation Actions</th>
+                  <th className="p-3.5">Country / State</th>
+                  <th className="p-3.5">PRO Status</th>
+                  <th className="p-3.5">Ad-Free Amount Paid</th>
+                  <th className="p-3.5">Advanced Features</th>
+                  <th className="p-3.5">Total Events</th>
+                  <th className="p-3.5">Account Status</th>
+                  <th className="p-3.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80">
                 {filteredUsers.length > 0 ? (
-                  filteredUsers.map((u) => (
-                    <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="p-3.5">
-                        <div className="flex items-center gap-2.5">
-                          <img
-                            src={u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces'}
-                            alt={u.name}
-                            className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-700"
-                          />
-                          <div>
-                            <div className="font-semibold text-slate-100">{u.name}</div>
-                            <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
+                  filteredUsers.map((u) => {
+                    const hasPayment = u.paymentEvidence?.hasRecordedPayment;
+                    const amountText = u.paymentEvidence?.amountFormatted || (hasPayment && typeof u.paymentEvidence?.amountPaid === 'number' ? `$${(u.paymentEvidence.amountPaid / 100).toFixed(2)} ${u.paymentEvidence.currency || 'USD'}` : null);
+                    const paymentRef = u.paymentEvidence?.transactionId || u.paymentEvidence?.paymentIntentId || u.paymentEvidence?.stripeSessionId;
+
+                    return (
+                      <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
+                        {/* 1. User Identity */}
+                        <td className="p-3.5">
+                          <div className="flex items-center gap-2.5">
+                            <img
+                              src={u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces'}
+                              alt={u.name}
+                              className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-700"
+                            />
+                            <div>
+                              <div className="font-semibold text-slate-100 flex items-center gap-1.5">
+                                <span>{u.name}</span>
+                                {u.isGoogleUser && (
+                                  <span className="px-1.5 py-0.2 bg-blue-500/10 text-blue-400 text-[9px] rounded font-mono border border-blue-500/20">
+                                    Google
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[10px] text-slate-400 font-mono">{u.email}</div>
+                              <div className="text-[9px] text-slate-500 font-mono">UID: {u.id}</div>
+                            </div>
                           </div>
-                        </div>
-                      </td>
-                      <td className="p-3.5">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                          u.loyaltyTier === 'Diamond'
-                            ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30'
-                            : u.loyaltyTier === 'Platinum'
-                            ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
-                            : u.loyaltyTier === 'Gold'
-                            ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
-                        }`}>
-                          {u.loyaltyTier || 'Standard'}
-                        </span>
-                      </td>
-                      <td className="p-3.5">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                          u.status === 'vip' || u.status === 'active' || u.status === 'verified'
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                            : u.status === 'flagged'
-                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                        }`}>
-                          {u.status.toUpperCase()}
-                        </span>
-                      </td>
-                      <td className="p-3.5 font-mono font-semibold text-white">
-                        {u.celebrationsHosted || 0}
-                      </td>
-                      <td className="p-3.5 font-mono text-slate-300">
-                        {u.giftsSentCount || 0} gifts
-                      </td>
-                      <td className="p-3.5 font-mono font-bold text-emerald-400">
-                        ${(u.totalGiftsVolume || 0).toLocaleString()}
-                      </td>
-                      <td className="p-3.5 text-slate-300 flex items-center gap-1">
-                        <MapPin className="w-3 h-3 text-slate-500" />
-                        {u.country || 'Global'}
-                      </td>
-                      <td className="p-3.5 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedUser(u)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-                            title="Inspect Profile"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                          </button>
-                          {u.status !== 'suspended' ? (
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateUserStatus(u.id, 'suspended')}
-                              className="p-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-800/40 transition-colors"
-                              title="Suspend User"
-                            >
-                              <Ban className="w-3.5 h-3.5" />
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateUserStatus(u.id, 'active')}
-                              className="p-1.5 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 border border-emerald-800/40 transition-colors"
-                              title="Reinstate User"
-                            >
-                              <UserCheck className="w-3.5 h-3.5" />
-                            </button>
+                        </td>
+
+                        {/* 2. Country / State */}
+                        <td className="p-3.5">
+                          <div className="flex items-center gap-1 text-slate-200 font-medium">
+                            <MapPin className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                            <span>{u.country || 'Unknown'}</span>
+                          </div>
+                          {(u.state || u.countryCode) && (
+                            <div className="text-[10px] text-slate-400 pl-4 font-mono">
+                              {u.state ? u.state : ''}
+                              {u.countryCode ? ` (${u.countryCode})` : ''}
+                            </div>
                           )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                        </td>
+
+                        {/* 3. PRO & Verification Status */}
+                        <td className="p-3.5">
+                          <div className="flex flex-col gap-1 items-start">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                              u.isPro
+                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30 shadow-sm shadow-amber-500/10'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}>
+                              {u.isPro ? '⚡ PRO' : 'NO_PRO'}
+                            </span>
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold border ${
+                              u.paymentEvidence?.verificationStatus === 'Payment Verified'
+                                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                : u.paymentEvidence?.verificationStatus === 'Evidence recorded — unverified' || u.paymentEvidence?.verificationStatus === 'Unverified / Client Flag'
+                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                : 'bg-slate-800/80 text-slate-500 border-slate-700/60'
+                            }`}>
+                              {u.paymentEvidence?.verificationStatus || 'No payment recorded'}
+                            </span>
+                            {u.hasProDiscrepancy && (
+                              <span
+                                className="px-1.5 py-0.2 rounded text-[8px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 cursor-help"
+                                title={u.proDiscrepancyNote}
+                              >
+                                ⚠️ Analytics claim — unverified
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* 4. Ad-Free Amount Paid */}
+                        <td className="p-3.5">
+                          {u.isPro || hasPayment ? (
+                            hasPayment ? (
+                              <div>
+                                <div className="font-mono font-bold text-emerald-400 text-xs">
+                                  {amountText || 'Payment Recorded'}
+                                </div>
+                                {paymentRef && (
+                                  <div className="text-[9px] font-mono text-slate-400 truncate max-w-[120px]" title={paymentRef}>
+                                    Ref: {paymentRef}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div>
+                                <div className="text-amber-400 font-semibold text-[11px]">
+                                  None Recorded
+                                </div>
+                                <div className="text-[9px] text-slate-500">
+                                  No payment metadata
+                                </div>
+                              </div>
+                            )
+                          ) : (
+                            <span className="text-slate-500 font-mono text-xs">N/A</span>
+                          )}
+                        </td>
+
+                        {/* 5. Advanced Features */}
+                        <td className="p-3.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              u.advancedFeatures?.unlocked
+                                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}>
+                              {u.advancedFeatures?.unlocked ? 'Unlocked 🔓' : 'Locked 🔒'}
+                            </span>
+                          </div>
+                          <div className="text-[9px] text-slate-400 mt-0.5 font-mono">
+                            🎬 {u.advancedFeatures?.adsWatched || 0} / {u.advancedFeatures?.rewardAdsRequired || 3} ads watched
+                          </div>
+                          {u.advancedFeatures?.hasAdDiscrepancy && (
+                            <div
+                              className="text-[8px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1 py-0.2 rounded mt-0.5 inline-block cursor-help"
+                              title={u.advancedFeatures.adDiscrepancyNote}
+                            >
+                              ⚠️ Analytics {u.advancedFeatures.analyticsAdsWatched}/3 (Reconciliation needed)
+                            </div>
+                          )}
+                        </td>
+
+                        {/* 6. Total Events */}
+                        <td className="p-3.5">
+                          <div className="font-mono font-bold text-white text-xs">
+                            {(u.androidEventsCount || 0) + (u.legacyCelebrationsCount || 0)} Total
+                          </div>
+                          <div className="text-[9px] text-slate-400 font-mono">
+                            {u.androidEventsCount || 0} Android • {u.legacyCelebrationsCount || u.celebrationsHosted || 0} Legacy
+                          </div>
+                        </td>
+
+                        {/* 7. Account Status */}
+                        <td className="p-3.5">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            u.status === 'vip' || u.status === 'active' || u.status === 'verified'
+                              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                              : u.status === 'flagged'
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+                              : 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                          }`}>
+                            {u.status.toUpperCase()}
+                          </span>
+                        </td>
+
+                        {/* 8. Actions */}
+                        <td className="p-3.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedUser(u)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+                              title="Inspect Profile & Payments"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            {u.status !== 'suspended' ? (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateUserStatus(u.id, 'suspended')}
+                                className="p-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-800/40 transition-colors"
+                                title="Suspend User"
+                              >
+                                <Ban className="w-3.5 h-3.5" />
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateUserStatus(u.id, 'active')}
+                                className="p-1.5 rounded-lg bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 border border-emerald-800/40 transition-colors"
+                                title="Reinstate User"
+                              >
+                                <UserCheck className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 ) : (
                   <tr>
                     <td colSpan={8} className="p-8 text-center text-slate-400">
@@ -978,70 +1130,211 @@ export const CelebrationsModule: React.FC = () => {
         </div>
       )}
 
-      {/* User Details Modal */}
+      {/* User Details Inspector Modal */}
       {selectedUser && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-3">
                 <img
                   src={selectedUser.avatar}
                   alt={selectedUser.name}
-                  className="w-9 h-9 rounded-full object-cover ring-2 ring-rose-500/50"
+                  className="w-10 h-10 rounded-full object-cover ring-2 ring-rose-500/50"
                 />
                 <div>
-                  <h3 className="font-bold text-white text-sm">{selectedUser.name}</h3>
-                  <p className="text-[11px] text-slate-400 font-mono">{selectedUser.email}</p>
+                  <h3 className="font-bold text-white text-base flex items-center gap-2">
+                    <span>{selectedUser.name}</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                      selectedUser.status === 'suspended' ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    }`}>
+                      {selectedUser.status}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 font-mono">{selectedUser.email}</p>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedUser(null)}
-                className="text-slate-400 hover:text-white"
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
               >
                 ✕
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2.5 text-xs text-center">
+            {/* Firebase UID Section */}
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between gap-2">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Firebase UID</span>
+                <span className="font-mono text-xs text-amber-300 select-all">{selectedUser.id}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleCopyUid(selectedUser.id)}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                {copiedUid === selectedUser.id ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-emerald-400">Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Copy UID</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Quick Summary Grid */}
+            <div className="grid grid-cols-4 gap-2 text-center text-xs">
               <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block">Hosted</span>
-                <p className="text-base font-bold text-white font-mono mt-0.5">{selectedUser.celebrationsHosted}</p>
+                <span className="text-[10px] text-slate-400 block font-semibold">Total Events</span>
+                <p className="text-base font-bold text-white font-mono mt-0.5">{(selectedUser.androidEventsCount || 0) + (selectedUser.legacyCelebrationsCount || 0)}</p>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block">Gifts Sent</span>
-                <p className="text-base font-bold text-indigo-300 font-mono mt-0.5">{selectedUser.giftsSentCount}</p>
+                <span className="text-[10px] text-slate-400 block font-semibold">Android Events</span>
+                <p className="text-base font-bold text-indigo-300 font-mono mt-0.5">{selectedUser.androidEventsCount || 0}</p>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
-                <span className="text-[10px] text-slate-400 block">Total Volume</span>
-                <p className="text-base font-bold text-emerald-400 font-mono mt-0.5">${selectedUser.totalGiftsVolume.toLocaleString()}</p>
+                <span className="text-[10px] text-slate-400 block font-semibold">Legacy Hosted</span>
+                <p className="text-base font-bold text-slate-300 font-mono mt-0.5">{selectedUser.legacyCelebrationsCount || selectedUser.celebrationsHosted || 0}</p>
+              </div>
+              <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                <span className="text-[10px] text-slate-400 block font-semibold">Total Volume</span>
+                <p className="text-base font-bold text-emerald-400 font-mono mt-0.5">${(selectedUser.totalGiftsVolume || 0).toLocaleString()}</p>
               </div>
             </div>
 
-            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs space-y-1.5">
-              <div className="flex justify-between">
-                <span className="text-slate-400">Account ID:</span>
-                <span className="font-mono text-slate-200">{selectedUser.id}</span>
+            {/* Detailed Metadata Grid */}
+            <div className="space-y-3 text-xs">
+              {/* Location Card */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5 border-b border-slate-800/80 pb-1.5">
+                  <MapPin className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Location & Regional Context</span>
+                </h4>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Country Name</span>
+                    <span className="font-semibold text-white">{selectedUser.country}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Country Code</span>
+                    <span className="font-mono text-slate-300">{selectedUser.countryCode || 'None recorded'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">State / Region Name</span>
+                    <span className="font-semibold text-white">{selectedUser.state || 'None recorded'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">State Code</span>
+                    <span className="font-mono text-slate-300">{selectedUser.stateCode || 'None recorded'}</span>
+                  </div>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Member Since:</span>
-                <span className="font-mono text-slate-200">{selectedUser.joinedDate}</span>
+
+              {/* PRO & Payment Evidence Card */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5 border-b border-slate-800/80 pb-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  <span>PRO / Ad-Free Entitlement & Payment Evidence</span>
+                </h4>
+                <div className="grid grid-cols-2 gap-2.5 text-xs">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Entitlement Status</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block mt-0.5 border ${
+                      selectedUser.isPro ? 'bg-amber-500/15 text-amber-300 border-amber-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}>
+                      {selectedUser.isPro ? '⚡ PRO (Lifetime Unlocked)' : 'NO_PRO (Ads Enabled)'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Verification Status</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block mt-0.5 border ${
+                      selectedUser.paymentEvidence?.verificationStatus === 'Payment Verified'
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        : selectedUser.paymentEvidence?.verificationStatus === 'Unverified / Client Flag'
+                        ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                        : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}>
+                      {selectedUser.paymentEvidence?.verificationStatus || 'Payment N/A'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Verified Payment Amount</span>
+                    <span className={`font-mono font-bold ${selectedUser.paymentEvidence?.hasRecordedPayment ? 'text-emerald-400' : 'text-slate-400'}`}>
+                      {selectedUser.paymentEvidence?.amountFormatted || (selectedUser.paymentEvidence?.hasRecordedPayment && typeof selectedUser.paymentEvidence?.amountPaid === 'number' ? `$${(selectedUser.paymentEvidence.amountPaid / 100).toFixed(2)} ${selectedUser.paymentEvidence.currency || 'USD'}` : 'None Recorded')}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Purchase Timestamp</span>
+                    <span className="font-mono text-slate-300">{selectedUser.paymentEvidence?.purchasedAt || 'None recorded'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Transaction / PaymentIntent Ref</span>
+                    <span className="font-mono text-[11px] text-slate-300 truncate block select-all" title={selectedUser.paymentEvidence?.transactionId || selectedUser.paymentEvidence?.paymentIntentId}>
+                      {selectedUser.paymentEvidence?.transactionId || selectedUser.paymentEvidence?.paymentIntentId || 'None recorded'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Stripe Session Ref</span>
+                    <span className="font-mono text-[11px] text-slate-300 truncate block select-all" title={selectedUser.paymentEvidence?.stripeSessionId}>
+                      {selectedUser.paymentEvidence?.stripeSessionId || 'None recorded'}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Last Activity:</span>
-                <span className="font-mono text-emerald-400">{selectedUser.lastActive}</span>
+
+              {/* Advanced Features & Rewarded Ads Card */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                <h4 className="font-bold text-slate-200 text-xs flex items-center gap-1.5 border-b border-slate-800/80 pb-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Advanced Features & Rewarded Ads</span>
+                </h4>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Unlock Status</span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-block mt-0.5 border ${
+                      selectedUser.advancedFeatures?.unlocked ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30' : 'bg-slate-800 text-slate-400 border-slate-700'
+                    }`}>
+                      {selectedUser.advancedFeatures?.unlocked ? 'Unlocked 🔓' : 'Locked 🔒'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">Rewarded Ads Watched</span>
+                    <span className="font-mono font-semibold text-white">
+                      🎬 {selectedUser.advancedFeatures?.adsWatched || 0} / {selectedUser.advancedFeatures?.rewardAdsRequired || 3} ads watched
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Country:</span>
-                <span className="text-slate-200">{selectedUser.country}</span>
+
+              {/* Account Meta Card */}
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Loyalty Tier:</span>
+                  <span className="font-semibold text-amber-300">{selectedUser.loyaltyTier}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Member Since:</span>
+                  <span className="font-mono text-slate-200">{selectedUser.joinedDate}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Last Activity:</span>
+                  <span className="font-mono text-emerald-400">{selectedUser.lastActive}</span>
+                </div>
               </div>
             </div>
 
+            {/* Modal Footer */}
             <div className="pt-3 border-t border-slate-800 flex justify-end">
               <button
                 type="button"
                 onClick={() => setSelectedUser(null)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold"
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold cursor-pointer"
               >
                 Close Inspector
               </button>
