@@ -2073,6 +2073,26 @@ app.post("/api/admob/config", requireAdminAuth, async (req, res) => {
     return res.status(400).json({ success: false, error: "Invalid payload body" });
   }
 
+  // Reject legacy HMAC tokens & verify cryptographically authenticated user identity
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ success: false, error: "Missing Bearer token" });
+  }
+  const rawToken = authHeader.split("Bearer ")[1].trim();
+  const dotCount = (rawToken.match(/\./g) || []).length;
+  const authenticatedUser = (req as any).user;
+
+  if (!authenticatedUser || !authenticatedUser.email || dotCount !== 2) {
+    return res.status(403).json({
+      success: false,
+      code: "FIREBASE_TOKEN_REQUIRED",
+      error: "A valid, cryptographically verified Firebase ID token is required for Firestore persistence.",
+    });
+  }
+
+  // Derive administrator identity directly from verified JWT email (NO FALLBACKS PERMITTED)
+  const adminEmail = authenticatedUser.email.toLowerCase().trim();
+
   // Interstitial trigger validation: Strictly block unsafe triggers
   const allowedTriggers = ["NATURAL_BREAK", "AFTER_N_ACTIONS", "AFTER_EVENT_VIEW", "AFTER_CALENDAR_NAVIGATION", "CUSTOM"];
   if (updates.interstitialTrigger && !allowedTriggers.includes(updates.interstitialTrigger)) {
@@ -2082,109 +2102,155 @@ app.post("/api/admob/config", requireAdminAuth, async (req, res) => {
     });
   }
 
-  // Validate and prepare fields to persist
-  const fieldsToPersist: Record<string, any> = {};
+  // Construct temporary state without mutating admobSettingsState before write succeeds
+  const tempState = { ...admobSettingsState };
+  const fieldsToUpdate: Record<string, any> = {};
+  const updateMaskParams: string[] = [];
 
   const addField = (field: string, val: any) => {
-    fieldsToPersist[field] = val;
+    fieldsToUpdate[field] = convertToFirestoreValue(val);
+    updateMaskParams.push(`updateMask.fieldPaths=${field}`);
   };
 
   // Preserve and validate all existing AdMob fields
   if (typeof updates.adsEnabled === "boolean") {
     addField("adsEnabled", updates.adsEnabled);
-    admobSettingsState.adsEnabled = updates.adsEnabled;
+    tempState.adsEnabled = updates.adsEnabled;
   }
   if (typeof updates.bannerEnabled === "boolean") {
     addField("bannerEnabled", updates.bannerEnabled);
-    admobSettingsState.bannerEnabled = updates.bannerEnabled;
+    tempState.bannerEnabled = updates.bannerEnabled;
   }
   if (typeof updates.interstitialEnabled === "boolean") {
     addField("interstitialEnabled", updates.interstitialEnabled);
-    admobSettingsState.interstitialEnabled = updates.interstitialEnabled;
+    tempState.interstitialEnabled = updates.interstitialEnabled;
   }
   if (typeof updates.isPostSaveAdEnabled === "boolean") {
     addField("isPostSaveAdEnabled", updates.isPostSaveAdEnabled);
-    admobSettingsState.isPostSaveAdEnabled = updates.isPostSaveAdEnabled;
+    tempState.isPostSaveAdEnabled = updates.isPostSaveAdEnabled;
   }
   if (typeof updates.isRewardedAdEnabled === "boolean") {
     addField("isRewardedAdEnabled", updates.isRewardedAdEnabled);
-    admobSettingsState.isRewardedAdEnabled = updates.isRewardedAdEnabled;
+    tempState.isRewardedAdEnabled = updates.isRewardedAdEnabled;
   }
   if (typeof updates.bannerAdUnitId === "string") {
     addField("bannerAdUnitId", updates.bannerAdUnitId.trim());
-    admobSettingsState.bannerAdUnitId = updates.bannerAdUnitId.trim();
+    tempState.bannerAdUnitId = updates.bannerAdUnitId.trim();
   }
   if (typeof updates.interstitialAdUnitId === "string") {
     addField("interstitialAdUnitId", updates.interstitialAdUnitId.trim());
-    admobSettingsState.interstitialAdUnitId = updates.interstitialAdUnitId.trim();
+    tempState.interstitialAdUnitId = updates.interstitialAdUnitId.trim();
   }
   if (typeof updates.postSavePopupAdUnitId === "string") {
     addField("postSavePopupAdUnitId", updates.postSavePopupAdUnitId.trim());
-    admobSettingsState.postSavePopupAdUnitId = updates.postSavePopupAdUnitId.trim();
+    tempState.postSavePopupAdUnitId = updates.postSavePopupAdUnitId.trim();
   }
   if (typeof updates.rewardedAdUnitId === "string") {
     addField("rewardedAdUnitId", updates.rewardedAdUnitId.trim());
-    admobSettingsState.rewardedAdUnitId = updates.rewardedAdUnitId.trim();
+    tempState.rewardedAdUnitId = updates.rewardedAdUnitId.trim();
   }
   if (updates.bannerPlacement === "BOTTOM" || updates.bannerPlacement === "TOP") {
     addField("bannerPlacement", updates.bannerPlacement);
-    admobSettingsState.bannerPlacement = updates.bannerPlacement;
+    tempState.bannerPlacement = updates.bannerPlacement;
   }
   if (updates.interstitialTrigger && allowedTriggers.includes(updates.interstitialTrigger)) {
     addField("interstitialTrigger", updates.interstitialTrigger);
-    admobSettingsState.interstitialTrigger = updates.interstitialTrigger;
+    tempState.interstitialTrigger = updates.interstitialTrigger;
   }
   if (typeof updates.interstitialFrequency === "number") {
     const val = Math.max(1, Math.min(50, updates.interstitialFrequency));
     addField("interstitialFrequency", val);
-    admobSettingsState.interstitialFrequency = val;
+    tempState.interstitialFrequency = val;
   }
   if (typeof updates.minActionsBeforeFirstAd === "number") {
     const val = Math.max(1, Math.min(30, updates.minActionsBeforeFirstAd));
     addField("minActionsBeforeFirstAd", val);
-    admobSettingsState.minActionsBeforeFirstAd = val;
+    tempState.minActionsBeforeFirstAd = val;
   }
   if (typeof updates.minimumSessionTimeSeconds === "number") {
     const val = Math.max(10, Math.min(1800, updates.minimumSessionTimeSeconds));
     addField("minimumSessionTimeSeconds", val);
-    admobSettingsState.minimumSessionTimeSeconds = val;
+    tempState.minimumSessionTimeSeconds = val;
   }
   if (typeof updates.cooldownMinutes === "number") {
     const val = Math.max(1, Math.min(120, updates.cooldownMinutes));
     addField("cooldownMinutes", val);
-    admobSettingsState.cooldownMinutes = val;
+    tempState.cooldownMinutes = val;
   }
   if (typeof updates.maxInterstitialsPerSession === "number") {
     const val = Math.max(1, Math.min(10, updates.maxInterstitialsPerSession));
     addField("maxInterstitialsPerSession", val);
-    admobSettingsState.maxInterstitialsPerSession = val;
+    tempState.maxInterstitialsPerSession = val;
   }
   if (Array.isArray(updates.adUnits)) {
     addField("adUnits", updates.adUnits);
   }
 
-  // Update administrative metadata
+  // Record administrative metadata
   const nowIso = new Date().toISOString();
-  const adminEmail = updates.adminEmail || "Admin@7tasker.com";
-
   addField("updatedAt", nowIso);
   addField("updatedBy", adminEmail);
-
-  admobSettingsState.updatedAt = nowIso;
-  admobSettingsState.updatedBy = adminEmail;
+  tempState.updatedAt = nowIso;
+  tempState.updatedBy = adminEmail;
 
   try {
-    const admobDocRef = db.collection("settings").doc("admob");
-    await admobDocRef.set(fieldsToPersist, { merge: true });
+    // 1. Write to target Firestore document forwarding verified Firebase ID Token
+    const patchUrl = `${FIRESTORE_ADMOB_REST_URL}?${updateMaskParams.join("&")}&key=${FIREBASE_API_KEY}`;
+    const patchRes = await fetch(patchUrl, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${rawToken}`, // Forward verified Firebase ID token to satisfy Security Rules
+      },
+      body: JSON.stringify({ fields: fieldsToUpdate }),
+    });
+
+    if (!patchRes.ok) {
+      const errBody = await patchRes.text();
+      console.error("[AdMob Admin Publish] Firestore write rejected:", patchRes.status, errBody);
+      return res.status(patchRes.status === 403 || patchRes.status === 401 ? 403 : 500).json({
+        success: false,
+        code: "PERMISSION_DENIED",
+        error: `Firestore persistence rejected (${patchRes.status}): ${errBody}`,
+      });
+    }
+
+    // 2. Read back the persisted document from Firestore forwarding verified Firebase ID Token
+    const readRes = await fetch(`${FIRESTORE_ADMOB_REST_URL}?key=${FIREBASE_API_KEY}`, {
+      headers: {
+        Authorization: `Bearer ${rawToken}`, // Forward verified Firebase ID token on read-back
+      },
+    });
+
+    let persisted: any = null;
+    let updateTime: string | undefined;
+    let verificationWarning = false;
+
+    if (readRes.ok) {
+      const readData: any = await readRes.json();
+      persisted = parseFirestoreFields(readData.fields || {});
+      updateTime = readData.updateTime;
+    } else {
+      verificationWarning = true;
+      const readErr = await readRes.text();
+      console.warn("[AdMob Admin Publish] Read-back verification warning:", readRes.status, readErr);
+    }
+
+    // 3. Commit to in-memory state ONLY after Firestore persistence succeeds
+    Object.assign(admobSettingsState, tempState);
     lastFirestoreAdMobSync = Date.now();
 
     return res.json({
       success: true,
-      message: "AdMob configuration persisted and verified in Firestore.",
+      message: verificationWarning
+        ? "AdMob configuration persisted to Firestore, but read-back verification returned a warning."
+        : "AdMob configuration persisted and verified in Firestore.",
+      persisted,
+      updateTime,
       config: admobSettingsState,
     });
   } catch (writeErr: any) {
-    console.error("[AdMob Admin Publish] Firestore Admin SDK write failed:", writeErr);
+    console.error("[AdMob Admin Publish] Firestore write error:", writeErr);
     return res.status(500).json({
       success: false,
       error: writeErr?.message || "Failed to persist AdMob configuration to Firestore",
