@@ -22,31 +22,32 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.admin == true;
     }
 
-    // Checks if the authenticated user matches any owner/creator identifier on an event document.
+    // Checks if the authenticated user matches ALL present owner/creator identifiers on an event document.
+    // If conflicting UIDs exist across present owner fields, access is DENIED to prevent ambiguity.
     function isEventOwner(data) {
-      return isAuthenticated() && (
-        (('createdBy' in data) && data.createdBy == request.auth.uid) ||
-        (('hostUid' in data) && data.hostUid == request.auth.uid) ||
-        (('userId' in data) && data.userId == request.auth.uid) ||
-        (('ownerUid' in data) && data.ownerUid == request.auth.uid) ||
-        (('creatorUid' in data) && data.creatorUid == request.auth.uid) ||
-        (('user_id' in data) && data.user_id == request.auth.uid) ||
-        (('host_id' in data) && data.host_id == request.auth.uid)
-      );
+      return isAuthenticated() &&
+        hasAnyOwnerField(data) &&
+        (!('createdBy' in data) || data.createdBy == request.auth.uid) &&
+        (!('hostUid' in data) || data.hostUid == request.auth.uid) &&
+        (!('userId' in data) || data.userId == request.auth.uid) &&
+        (!('ownerUid' in data) || data.ownerUid == request.auth.uid) &&
+        (!('creatorUid' in data) || data.creatorUid == request.auth.uid) &&
+        (!('user_id' in data) || data.user_id == request.auth.uid) &&
+        (!('host_id' in data) || data.host_id == request.auth.uid);
     }
 
     // Validates that if any owner identifier is provided on event creation, it MUST match request.auth.uid.
+    // At least one owner field must be specified.
     function isValidNewEventOwnership() {
-      return isAuthenticated() && (
-        !hasAnyOwnerField(request.resource.data) ||
+      return isAuthenticated() &&
+        hasAnyOwnerField(request.resource.data) &&
         (!('createdBy' in request.resource.data) || request.resource.data.createdBy == request.auth.uid) &&
         (!('hostUid' in request.resource.data) || request.resource.data.hostUid == request.auth.uid) &&
         (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&
         (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == request.auth.uid) &&
         (!('creatorUid' in request.resource.data) || request.resource.data.creatorUid == request.auth.uid) &&
         (!('user_id' in request.resource.data) || request.resource.data.user_id == request.auth.uid) &&
-        (!('host_id' in request.resource.data) || request.resource.data.host_id == request.auth.uid)
-      );
+        (!('host_id' in request.resource.data) || request.resource.data.host_id == request.auth.uid);
     }
 
     // Checks whether an event document has ANY owner identifier field present
@@ -60,18 +61,126 @@ service cloud.firestore {
         ('host_id' in data);
     }
 
-    // Ensures immutable event ownership fields cannot be altered after creation
+    // Comprehensive list of server-controlled entitlement, payment, and privilege keys
+    function isProtectedKey(key) {
+      return key in [
+        'isPro',
+        'proStatus',
+        'removeAdsLifetime',
+        'remove_ads_lifetime',
+        'entitlements',
+        'isAdsRemoved',
+        'removeAdsProvider',
+        'removeAdsStripeSessionId',
+        'transactionId',
+        'paymentIntentId',
+        'amountPaid',
+        'currency',
+        'purchasedAt',
+        'stripeCustomerId',
+        'role',
+        'purchases',
+        'subscriptionStatus',
+        'adsRemovedAt',
+        'paymentHistory'
+      ];
+    }
+
+    // Ensures no protected entitlement/payment field is added during document creation
+    function hasNoProtectedFieldsOnCreate() {
+      let keys = request.resource.data.keys();
+      return !keys.hasAny([
+        'isPro',
+        'proStatus',
+        'removeAdsLifetime',
+        'remove_ads_lifetime',
+        'entitlements',
+        'isAdsRemoved',
+        'removeAdsProvider',
+        'removeAdsStripeSessionId',
+        'transactionId',
+        'paymentIntentId',
+        'amountPaid',
+        'currency',
+        'purchasedAt',
+        'stripeCustomerId',
+        'role',
+        'purchases',
+        'subscriptionStatus',
+        'adsRemovedAt',
+        'paymentHistory'
+      ]);
+    }
+
+    // Verifies that any protected field included during initial client profile creation contains ONLY unprivileged default values
+    function isUnprivilegedCreate() {
+      let data = request.resource.data;
+      return (!('isPro' in data) || data.isPro == false) &&
+             (!('proStatus' in data) || data.proStatus == 'FREE' || data.proStatus == 'INACTIVE' || data.proStatus == 'NONE') &&
+             (!('removeAdsLifetime' in data) || data.removeAdsLifetime == false) &&
+             (!('remove_ads_lifetime' in data) || data.remove_ads_lifetime == false) &&
+             (!('isAdsRemoved' in data) || data.isAdsRemoved == false) &&
+             (!('role' in data) || data.role == 'user' || data.role == 'customer') &&
+             (!('removeAdsProvider' in data) || data.removeAdsProvider == null || data.removeAdsProvider == '') &&
+             (!('removeAdsStripeSessionId' in data) || data.removeAdsStripeSessionId == null || data.removeAdsStripeSessionId == '') &&
+             (!('transactionId' in data) || data.transactionId == null || data.transactionId == '') &&
+             (!('paymentIntentId' in data) || data.paymentIntentId == null || data.paymentIntentId == '') &&
+             (!('amountPaid' in data) || data.amountPaid == 0) &&
+             (!('currency' in data) || data.currency == 'USD') &&
+             (!('purchasedAt' in data) || data.purchasedAt == null || data.purchasedAt == '') &&
+             (!('stripeCustomerId' in data) || data.stripeCustomerId == null || data.stripeCustomerId == '') &&
+             (!('subscriptionStatus' in data) || data.subscriptionStatus == 'inactive' || data.subscriptionStatus == 'none' || data.subscriptionStatus == 'free') &&
+             (!('adsRemovedAt' in data) || data.adsRemovedAt == null || data.adsRemovedAt == '') &&
+             (!('entitlements' in data) || data.entitlements == {} || data.entitlements.size() == 0) &&
+             (!('purchases' in data) || data.purchases == [] || data.purchases.size() == 0) &&
+             (!('paymentHistory' in data) || data.paymentHistory == [] || data.paymentHistory.size() == 0);
+    }
+
+    // Ensures no protected entitlement/payment field is altered during document update
+    function protectedFieldsUnchanged() {
+      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
+      return !affectedKeys.hasAny([
+        'isPro',
+        'proStatus',
+        'removeAdsLifetime',
+        'remove_ads_lifetime',
+        'entitlements',
+        'isAdsRemoved',
+        'removeAdsProvider',
+        'removeAdsStripeSessionId',
+        'transactionId',
+        'paymentIntentId',
+        'amountPaid',
+        'currency',
+        'purchasedAt',
+        'stripeCustomerId',
+        'role',
+        'purchases',
+        'subscriptionStatus',
+        'adsRemovedAt',
+        'paymentHistory'
+      ]);
+    }
+
+    // Ensures immutable event ownership fields cannot be altered, added, or deleted after creation
     function eventOwnershipUnchanged() {
-      return (!('createdBy' in resource.data) || !('createdBy' in request.resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&
-             (!('hostUid' in resource.data) || !('hostUid' in request.resource.data) || request.resource.data.hostUid == resource.data.hostUid) &&
-             (!('ownerUid' in resource.data) || !('ownerUid' in request.resource.data) || request.resource.data.ownerUid == resource.data.ownerUid) &&
-             (!('creatorUid' in resource.data) || !('creatorUid' in request.resource.data) || request.resource.data.creatorUid == resource.data.creatorUid) &&
-             (!('host_id' in resource.data) || !('host_id' in request.resource.data) || request.resource.data.host_id == resource.data.host_id);
+      return ('createdBy' in request.resource.data == 'createdBy' in resource.data) &&
+             (!('createdBy' in resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&
+             ('hostUid' in request.resource.data == 'hostUid' in resource.data) &&
+             (!('hostUid' in resource.data) || request.resource.data.hostUid == resource.data.hostUid) &&
+             ('ownerUid' in request.resource.data == 'ownerUid' in resource.data) &&
+             (!('ownerUid' in resource.data) || request.resource.data.ownerUid == resource.data.ownerUid) &&
+             ('creatorUid' in request.resource.data == 'creatorUid' in resource.data) &&
+             (!('creatorUid' in resource.data) || request.resource.data.creatorUid == resource.data.creatorUid) &&
+             ('host_id' in request.resource.data == 'host_id' in resource.data) &&
+             (!('host_id' in resource.data) || request.resource.data.host_id == resource.data.host_id);
     }
 
     function eventUserUnchanged() {
-      return (!('userId' in resource.data) || !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId) &&
-             (!('user_id' in resource.data) || !('user_id' in request.resource.data) || request.resource.data.user_id == resource.data.user_id);
+      return ('userId' in request.resource.data == 'userId' in resource.data) &&
+             (!('userId' in resource.data) || request.resource.data.userId == resource.data.userId) &&
+             ('user_id' in request.resource.data == 'user_id' in resource.data) &&
+             (!('user_id' in resource.data) || request.resource.data.user_id == resource.data.user_id);
     }
 
     // =========================================================================
@@ -79,16 +188,50 @@ service cloud.firestore {
     // =========================================================================
 
     match /users/{userId} {
-      allow read, write: if isOwner(userId) || isAdmin();
+      allow read: if isOwner(userId) || isAdmin();
+      
+      // Separate Create and Update permissions
+      allow create: if isOwner(userId) && (hasNoProtectedFieldsOnCreate() || isUnprivilegedCreate());
+      allow update: if (isOwner(userId) && protectedFieldsUnchanged()) || isAdmin();
+      allow delete: if isAdmin();
 
       // Explicit rules for users/{userId}/settings/preferences
       match /settings/preferences {
-        allow read, write: if isOwner(userId) || isAdmin();
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId) && (hasNoProtectedFieldsOnCreate() || isUnprivilegedCreate());
+        allow update: if (isOwner(userId) && protectedFieldsUnchanged()) || isAdmin();
+        allow delete: if isAdmin();
       }
 
       // Explicit rules for users/{userId}/events/{eventId} (FULL CRUD FOR USER)
       match /events/{eventId} {
-        allow read, write: if isOwner(userId) || isAdmin();
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update: if (isOwner(userId) && eventOwnershipUnchanged() && eventUserUnchanged()) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      // Explicit rules for users/{userId}/celebrations/{eventId}
+      match /celebrations/{eventId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update: if (isOwner(userId) && eventOwnershipUnchanged() && eventUserUnchanged()) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      // Explicit rules for users/{userId}/custom_holidays/{eventId}
+      match /custom_holidays/{eventId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update: if (isOwner(userId) && eventOwnershipUnchanged() && eventUserUnchanged()) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      // Explicit rules for users/{userId}/deleted_events/{eventId}
+      match /deleted_events/{eventId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update, delete: if isOwner(userId) || isAdmin();
       }
 
       // Explicit fallback for other subcollections under users/{userId}
@@ -125,10 +268,9 @@ service cloud.firestore {
     // 3. CELEBRATIONS & EVENTS (Ownership & Privacy Enforcement)
     // =========================================================================
 
-    // Collection Group Rule for Events across all subcollections
+    // Collection-Group Rule for Events across all subcollections (Owner & Admin)
     match /{path=**}/events/{eventId} {
-      allow read: if isAuthenticated();
-      allow write: if isEventOwner(resource.data) || isAdmin();
+      allow read: if isEventOwner(resource.data) || isAdmin();
     }
 
     match /celebrations/{celebrationId} {

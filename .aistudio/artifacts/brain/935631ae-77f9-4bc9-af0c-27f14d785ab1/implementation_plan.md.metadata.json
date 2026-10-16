@@ -1,0 +1,6 @@
+{
+  "summary": "Updated targeted implementation plan for firestore.rules to authorize owner event reads and deleted event sync with admin overrides, restoring Android Cloud Sync.",
+  "updatedAt": "2026-10-16T14:00:30.767717374Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
