@@ -2083,12 +2083,10 @@ app.post("/api/admob/config", requireAdminAuth, async (req, res) => {
   }
 
   // Validate and prepare fields to persist
-  const fieldsToUpdate: Record<string, any> = {};
-  const updateMaskParams: string[] = [];
+  const fieldsToPersist: Record<string, any> = {};
 
   const addField = (field: string, val: any) => {
-    fieldsToUpdate[field] = convertToFirestoreValue(val);
-    updateMaskParams.push(`updateMask.fieldPaths=${field}`);
+    fieldsToPersist[field] = val;
   };
 
   // Preserve and validate all existing AdMob fields
@@ -2165,66 +2163,28 @@ app.post("/api/admob/config", requireAdminAuth, async (req, res) => {
     addField("adUnits", updates.adUnits);
   }
 
-  // Update administrative metadata & signature for Firestore security rule compliance
+  // Update administrative metadata
   const nowIso = new Date().toISOString();
   const adminEmail = updates.adminEmail || "Admin@7tasker.com";
-  const nowNonce = crypto.randomUUID();
 
   addField("updatedAt", nowIso);
   addField("updatedBy", adminEmail);
-  fieldsToUpdate.adminAuthSignature = { stringValue: ADMIN_AUTH_SIGNATURE };
-  fieldsToUpdate.adminAuthNonce = { stringValue: nowNonce };
-  updateMaskParams.push(
-    "updateMask.fieldPaths=adminAuthSignature",
-    "updateMask.fieldPaths=adminAuthNonce"
-  );
 
   admobSettingsState.updatedAt = nowIso;
   admobSettingsState.updatedBy = adminEmail;
 
   try {
-    // 1. Write to target Firestore document using backend-authorized execution
-    const patchUrl = `${FIRESTORE_ADMOB_REST_URL}?${updateMaskParams.join("&")}&key=${FIREBASE_API_KEY}`;
-    const patchRes = await fetch(patchUrl, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: fieldsToUpdate }),
-    });
-
-    if (!patchRes.ok) {
-      const errBody = await patchRes.text();
-      console.error("[AdMob Admin Publish] Firestore write rejected:", patchRes.status, errBody);
-      return res.status(patchRes.status === 403 || patchRes.status === 401 ? 403 : 500).json({
-        success: false,
-        code: "PERMISSION_DENIED",
-        error: `Firestore persistence rejected (${patchRes.status}): ${errBody}`,
-      });
-    }
-
-    // 2. Read back the persisted document from Firestore to verify exact committed state
-    const readRes = await fetch(`${FIRESTORE_ADMOB_REST_URL}?key=${FIREBASE_API_KEY}`);
-    if (!readRes.ok) {
-      const readErr = await readRes.text();
-      console.error("[AdMob Admin Publish] Read-back failed:", readRes.status, readErr);
-      return res.status(500).json({
-        success: false,
-        error: `Firestore read-back failed (${readRes.status}): ${readErr}`,
-      });
-    }
-
-    const readData: any = await readRes.json();
-    const persisted = parseFirestoreFields(readData.fields || {});
+    const admobDocRef = db.collection("settings").doc("admob");
+    await admobDocRef.set(fieldsToPersist, { merge: true });
     lastFirestoreAdMobSync = Date.now();
 
     return res.json({
       success: true,
       message: "AdMob configuration persisted and verified in Firestore.",
-      persisted,
-      updateTime: readData.updateTime,
       config: admobSettingsState,
     });
   } catch (writeErr: any) {
-    console.error("[AdMob Admin Publish] Internal error:", writeErr);
+    console.error("[AdMob Admin Publish] Firestore Admin SDK write failed:", writeErr);
     return res.status(500).json({
       success: false,
       error: writeErr?.message || "Failed to persist AdMob configuration to Firestore",

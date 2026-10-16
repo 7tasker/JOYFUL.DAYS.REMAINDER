@@ -1357,30 +1357,52 @@ class FirestoreSyncService {
 
   // Real-time listener for Android APK and Dashboard
   listenToAdMobSettings(callback: (config: Partial<AdMobSettingsConfig>) => void): () => void {
-    try {
-      const unsub = onSnapshot(doc(db, 'settings', 'admob'), (snapshot) => {
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          callback({
-            adsEnabled: Boolean(data.adsEnabled),
-            bannerEnabled: Boolean(data.bannerEnabled),
-            interstitialEnabled: Boolean(data.interstitialEnabled),
-            bannerAdUnitId: String(data.bannerAdUnitId || ''),
-            interstitialAdUnitId: String(data.interstitialAdUnitId || ''),
-            postSavePopupAdUnitId: String(data.postSavePopupAdUnitId || ''),
-            rewardedAdUnitId: String(data.rewardedAdUnitId || ''),
-            bannerPlacement: (data.bannerPlacement as any) || 'BOTTOM',
-            interstitialTrigger: (data.interstitialTrigger as any) || 'NATURAL_BREAK',
-            interstitialFrequency: Number(data.interstitialFrequency ?? 5),
-            minActionsBeforeFirstAd: Number(data.minActionsBeforeFirstAd ?? 5),
-            minimumSessionTimeSeconds: Number(data.minimumSessionTimeSeconds ?? 120),
-            cooldownMinutes: Number(data.cooldownMinutes ?? 10),
-            maxInterstitialsPerSession: Number(data.maxInterstitialsPerSession ?? 2),
-            updatedAt: data.updatedAt || new Date().toISOString(),
-            updatedBy: data.updatedBy || 'Admin@7tasker.com',
-          });
+    // Proactively fetch live server config on mount
+    fetch('/api/admob/config')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.success && data?.config) {
+          callback(data.config);
         }
-      });
+      })
+      .catch(() => {});
+
+    try {
+      const unsub = onSnapshot(
+        doc(db, 'settings', 'admob'),
+        (snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.data();
+            callback({
+              adsEnabled: Boolean(data.adsEnabled),
+              bannerEnabled: Boolean(data.bannerEnabled),
+              interstitialEnabled: Boolean(data.interstitialEnabled),
+              bannerAdUnitId: String(data.bannerAdUnitId || ''),
+              interstitialAdUnitId: String(data.interstitialAdUnitId || ''),
+              postSavePopupAdUnitId: String(data.postSavePopupAdUnitId || ''),
+              rewardedAdUnitId: String(data.rewardedAdUnitId || ''),
+              bannerPlacement: (data.bannerPlacement as any) || 'BOTTOM',
+              interstitialTrigger: (data.interstitialTrigger as any) || 'CUSTOM',
+              interstitialFrequency: Number(data.interstitialFrequency ?? 2),
+              minActionsBeforeFirstAd: Number(data.minActionsBeforeFirstAd ?? 3),
+              minimumSessionTimeSeconds: Number(data.minimumSessionTimeSeconds ?? 60),
+              cooldownMinutes: Number(data.cooldownMinutes ?? 1),
+              maxInterstitialsPerSession: Number(data.maxInterstitialsPerSession ?? 2),
+              updatedAt: data.updatedAt || new Date().toISOString(),
+              updatedBy: data.updatedBy || 'Admin@7tasker.com',
+            });
+          }
+        },
+        (err) => {
+          console.warn('[FirestoreSync] AdMob snapshot error, falling back to /api/admob/config:', err?.message);
+          fetch('/api/admob/config')
+            .then(res => res.json())
+            .then(data => {
+              if (data?.success && data?.config) callback(data.config);
+            })
+            .catch(() => {});
+        }
+      );
       return unsub;
     } catch {
       return () => {};
@@ -1390,21 +1412,21 @@ class FirestoreSyncService {
   // Ensure settings/admob exists in Firestore so Android listener receives valid document
   async ensureAdMobSettingsDocument(): Promise<{ success: boolean; config: AdMobSettingsConfig }> {
     const defaultConfig: AdMobSettingsConfig = {
-      adsEnabled: false,
-      bannerEnabled: false,
-      interstitialEnabled: false,
-      isPostSaveAdEnabled: false,
-      isRewardedAdEnabled: false,
-      bannerAdUnitId: '',
-      interstitialAdUnitId: '',
-      postSavePopupAdUnitId: '',
-      rewardedAdUnitId: '',
+      adsEnabled: true,
+      bannerEnabled: true,
+      interstitialEnabled: true,
+      isPostSaveAdEnabled: true,
+      isRewardedAdEnabled: true,
+      bannerAdUnitId: 'ca-app-pub-9690446677056751/5913164004',
+      interstitialAdUnitId: 'ca-app-pub-8492049102930192/3948201940',
+      postSavePopupAdUnitId: 'ca-app-pub-9690446677056751/4335084333',
+      rewardedAdUnitId: 'ca-app-pub-9690446677056751/9150221927',
       bannerPlacement: 'BOTTOM',
-      interstitialTrigger: 'NATURAL_BREAK',
-      interstitialFrequency: 5,
-      minActionsBeforeFirstAd: 5,
-      minimumSessionTimeSeconds: 120,
-      cooldownMinutes: 10,
+      interstitialTrigger: 'CUSTOM',
+      interstitialFrequency: 2,
+      minActionsBeforeFirstAd: 3,
+      minimumSessionTimeSeconds: 60,
+      cooldownMinutes: 1,
       maxInterstitialsPerSession: 2,
       updatedAt: new Date().toISOString(),
       updatedBy: 'Admin@7tasker.com',

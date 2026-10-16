@@ -144,13 +144,29 @@ export const CelebrationsModule: React.FC = () => {
     }
   };
 
-  // Delete event
+  // Delete single event
   const handleDeleteEvent = async (eventId: string, title: string) => {
     if (!window.confirm(`Are you sure you want to delete event "${title}"?`)) return;
     await firestoreSync.deleteCelebrationInFirestore(eventId);
     setCelebrations((prev) => prev.filter((c) => c.id !== eventId));
     setFeedbackMsg(`Event "${title}" removed from Firestore.`);
     setTimeout(() => setFeedbackMsg(null), 3000);
+  };
+
+  // Clear all events (temporarily disabled for live database preservation per audit protocol)
+  const handleClearAllEvents = async () => {
+    setFeedbackMsg('Bulk event deletion is disabled to preserve live database records. Use individual delete or Reset Filters.');
+    setTimeout(() => setFeedbackMsg(null), 4000);
+  };
+
+  // Clear active search query and dropdown filters
+  const handleClearSearchFilters = () => {
+    setSearchQuery('');
+    setStatusFilter('all');
+    setTypeFilter('all');
+    setTierFilter('all');
+    setProFilter('all');
+    setAdvFeaturesFilter('all');
   };
 
   const handleCopyUid = (uid: string) => {
@@ -439,13 +455,10 @@ export const CelebrationsModule: React.FC = () => {
                 onChange={(e) => setTypeFilter(e.target.value)}
                 className="px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-200"
               >
-                <option value="all">All Occasion Types</option>
+                <option value="all">All Occasion Sections</option>
                 <option value="birthday">Birthdays</option>
-                <option value="wedding">Weddings</option>
                 <option value="anniversary">Anniversaries</option>
-                <option value="baby_shower">Baby Showers</option>
-                <option value="graduation">Graduations</option>
-                <option value="corporate">Corporate Galas</option>
+                <option value="event">Events</option>
               </select>
 
               <select
@@ -458,6 +471,26 @@ export const CelebrationsModule: React.FC = () => {
                 <option value="upcoming">Upcoming</option>
                 <option value="completed">Completed</option>
               </select>
+
+              {(searchQuery || statusFilter !== 'all' || typeFilter !== 'all') && (
+                <button
+                  type="button"
+                  onClick={handleClearSearchFilters}
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                >
+                  Reset Filters
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleClearAllEvents}
+                className="px-3 py-2 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/60 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Clear all events from Firestore database"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                <span>Clear All Events</span>
+              </button>
             </div>
           </div>
 
@@ -688,6 +721,10 @@ export const CelebrationsModule: React.FC = () => {
                             <img
                               src={u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces'}
                               alt={u.name}
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=faces';
+                              }}
                               className="w-8 h-8 rounded-full object-cover ring-1 ring-slate-700"
                             />
                             <div>

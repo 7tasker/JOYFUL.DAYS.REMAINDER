@@ -1,12 +1,12 @@
 import { auth } from './firebase';
 import { AdminSessionService } from './adminSessionService';
+import { StorageService } from './storageService';
 
 /**
  * Utility to generate authenticated headers for server requests.
  * PRIORITY POLICY:
- * 1. Valid HMAC admin session token is ALWAYS authoritative and takes precedence.
- * 2. Background Firebase users never override an active HMAC admin session.
- * 3. Fallback to Firebase ID token ONLY if no HMAC session exists AND user is explicitly admin@7tasker.com.
+ * 1. Fresh Firebase ID Token from active signed-in admin user takes precedence.
+ * 2. Active stored session token fallback if valid.
  */
 export async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = {
@@ -14,20 +14,20 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
   };
 
   try {
-    // 1. TOP PRIORITY: Valid HMAC admin session token
+    // 1. TOP PRIORITY: Verified active admin session token from localStorage
     const session = AdminSessionService.getSession();
     if (session && session.token && AdminSessionService.isSessionValid()) {
       headers['Authorization'] = `Bearer ${session.token}`;
       return headers;
     }
 
-    // 2. SECONDARY FALLBACK: Firebase ID token ONLY if user is designated root admin
+    // 2. SECONDARY FALLBACK: Force-refreshed Firebase ID token to capture custom admin claims
     if (
       auth.currentUser &&
       auth.currentUser.email &&
-      auth.currentUser.email.toLowerCase().trim() === 'admin@7tasker.com'
+      StorageService.isAuthorizedAdmin(auth.currentUser.email)
     ) {
-      const token = await auth.currentUser.getIdToken();
+      const token = await auth.currentUser.getIdToken(true);
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
         return headers;
@@ -50,7 +50,7 @@ export async function authorizedFetch(url: string, options: RequestInit = {}): P
   const hasAdminFirebaseUser = Boolean(
     auth.currentUser &&
     auth.currentUser.email &&
-    auth.currentUser.email.toLowerCase().trim() === 'admin@7tasker.com'
+    StorageService.isAuthorizedAdmin(auth.currentUser.email)
   );
 
   // Pre-flight check: verify that an active admin session or admin user exists before making protected requests

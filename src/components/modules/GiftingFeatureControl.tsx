@@ -279,7 +279,7 @@ export const GiftingFeatureControl: React.FC<GiftingFeatureControlProps> = ({ on
     setIsTestingApi(true);
     const start = performance.now();
     try {
-      const res = await fetch('/api/gifting-status');
+      const res = await authorizedFetch('/api/gifting-status');
       const data = await res.json();
       const latencyMs = Math.round(performance.now() - start);
       setApiTestResponse({

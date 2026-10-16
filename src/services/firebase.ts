@@ -24,6 +24,7 @@ import {
   signInWithPopup,
   signOut,
   onAuthStateChanged,
+  onIdTokenChanged,
   User,
 } from 'firebase/auth';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
@@ -97,6 +98,7 @@ export {
   signInWithPopup,
   signOut,
   onAuthStateChanged,
+  onIdTokenChanged,
 };
 
 export type { Firestore, User };

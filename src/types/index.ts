@@ -485,7 +485,7 @@ export type UserAccount = CanonicalUserDashboardRecord;
 export type CelebrationEvent = {
   id: string;
   title: string;
-  type: 'birthday' | 'wedding' | 'anniversary' | 'baby_shower' | 'graduation' | 'holiday' | 'corporate';
+  type: 'birthday' | 'wedding' | 'anniversary' | 'baby_shower' | 'graduation' | 'holiday' | 'corporate' | 'event' | 'dinner' | string;
   hostName: string;
   hostEmail: string;
   eventDate: string;

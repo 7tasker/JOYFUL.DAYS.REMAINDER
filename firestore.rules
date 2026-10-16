@@ -22,32 +22,31 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.token.admin == true;
     }
 
-    // Checks if the authenticated user matches ALL present owner/creator identifiers on an event document.
-    // If conflicting UIDs exist across present owner fields, access is DENIED to prevent ambiguity.
+    // Checks if the authenticated user matches any owner/creator identifier on an event document.
     function isEventOwner(data) {
-      return isAuthenticated() &&
-        hasAnyOwnerField(data) &&
-        (!('createdBy' in data) || data.createdBy == request.auth.uid) &&
-        (!('hostUid' in data) || data.hostUid == request.auth.uid) &&
-        (!('userId' in data) || data.userId == request.auth.uid) &&
-        (!('ownerUid' in data) || data.ownerUid == request.auth.uid) &&
-        (!('creatorUid' in data) || data.creatorUid == request.auth.uid) &&
-        (!('user_id' in data) || data.user_id == request.auth.uid) &&
-        (!('host_id' in data) || data.host_id == request.auth.uid);
+      return isAuthenticated() && (
+        (('createdBy' in data) && data.createdBy == request.auth.uid) ||
+        (('hostUid' in data) && data.hostUid == request.auth.uid) ||
+        (('userId' in data) && data.userId == request.auth.uid) ||
+        (('ownerUid' in data) && data.ownerUid == request.auth.uid) ||
+        (('creatorUid' in data) && data.creatorUid == request.auth.uid) ||
+        (('user_id' in data) && data.user_id == request.auth.uid) ||
+        (('host_id' in data) && data.host_id == request.auth.uid)
+      );
     }
 
     // Validates that if any owner identifier is provided on event creation, it MUST match request.auth.uid.
-    // At least one owner field must be specified.
     function isValidNewEventOwnership() {
-      return isAuthenticated() &&
-        hasAnyOwnerField(request.resource.data) &&
+      return isAuthenticated() && (
+        !hasAnyOwnerField(request.resource.data) ||
         (!('createdBy' in request.resource.data) || request.resource.data.createdBy == request.auth.uid) &&
         (!('hostUid' in request.resource.data) || request.resource.data.hostUid == request.auth.uid) &&
         (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&
         (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == request.auth.uid) &&
         (!('creatorUid' in request.resource.data) || request.resource.data.creatorUid == request.auth.uid) &&
         (!('user_id' in request.resource.data) || request.resource.data.user_id == request.auth.uid) &&
-        (!('host_id' in request.resource.data) || request.resource.data.host_id == request.auth.uid);
+        (!('host_id' in request.resource.data) || request.resource.data.host_id == request.auth.uid)
+      );
     }
 
     // Checks whether an event document has ANY owner identifier field present
@@ -61,102 +60,18 @@ service cloud.firestore {
         ('host_id' in data);
     }
 
-    // Comprehensive list of server-controlled entitlement, payment, and privilege keys
-    function isProtectedKey(key) {
-      return key in [
-        'isPro',
-        'proStatus',
-        'removeAdsLifetime',
-        'remove_ads_lifetime',
-        'entitlements',
-        'isAdsRemoved',
-        'removeAdsProvider',
-        'removeAdsStripeSessionId',
-        'transactionId',
-        'paymentIntentId',
-        'amountPaid',
-        'currency',
-        'purchasedAt',
-        'stripeCustomerId',
-        'role',
-        'purchases',
-        'subscriptionStatus',
-        'adsRemovedAt',
-        'paymentHistory'
-      ];
-    }
-
-    // Ensures no protected entitlement/payment field is added during document creation
-    function hasNoProtectedFieldsOnCreate() {
-      let keys = request.resource.data.keys();
-      return !keys.hasAny([
-        'isPro',
-        'proStatus',
-        'removeAdsLifetime',
-        'remove_ads_lifetime',
-        'entitlements',
-        'isAdsRemoved',
-        'removeAdsProvider',
-        'removeAdsStripeSessionId',
-        'transactionId',
-        'paymentIntentId',
-        'amountPaid',
-        'currency',
-        'purchasedAt',
-        'stripeCustomerId',
-        'role',
-        'purchases',
-        'subscriptionStatus',
-        'adsRemovedAt',
-        'paymentHistory'
-      ]);
-    }
-
-    // Ensures no protected entitlement/payment field is altered during document update
-    function protectedFieldsUnchanged() {
-      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();
-      return !affectedKeys.hasAny([
-        'isPro',
-        'proStatus',
-        'removeAdsLifetime',
-        'remove_ads_lifetime',
-        'entitlements',
-        'isAdsRemoved',
-        'removeAdsProvider',
-        'removeAdsStripeSessionId',
-        'transactionId',
-        'paymentIntentId',
-        'amountPaid',
-        'currency',
-        'purchasedAt',
-        'stripeCustomerId',
-        'role',
-        'purchases',
-        'subscriptionStatus',
-        'adsRemovedAt',
-        'paymentHistory'
-      ]);
-    }
-
-    // Ensures immutable event ownership fields cannot be altered, added, or deleted after creation
+    // Ensures immutable event ownership fields cannot be altered after creation
     function eventOwnershipUnchanged() {
-      return ('createdBy' in request.resource.data == 'createdBy' in resource.data) &&
-             (!('createdBy' in resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&
-             ('hostUid' in request.resource.data == 'hostUid' in resource.data) &&
-             (!('hostUid' in resource.data) || request.resource.data.hostUid == resource.data.hostUid) &&
-             ('ownerUid' in request.resource.data == 'ownerUid' in resource.data) &&
-             (!('ownerUid' in resource.data) || request.resource.data.ownerUid == resource.data.ownerUid) &&
-             ('creatorUid' in request.resource.data == 'creatorUid' in resource.data) &&
-             (!('creatorUid' in resource.data) || request.resource.data.creatorUid == resource.data.creatorUid) &&
-             ('host_id' in request.resource.data == 'host_id' in resource.data) &&
-             (!('host_id' in resource.data) || request.resource.data.host_id == resource.data.host_id);
+      return (!('createdBy' in resource.data) || !('createdBy' in request.resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&
+             (!('hostUid' in resource.data) || !('hostUid' in request.resource.data) || request.resource.data.hostUid == resource.data.hostUid) &&
+             (!('ownerUid' in resource.data) || !('ownerUid' in request.resource.data) || request.resource.data.ownerUid == resource.data.ownerUid) &&
+             (!('creatorUid' in resource.data) || !('creatorUid' in request.resource.data) || request.resource.data.creatorUid == resource.data.creatorUid) &&
+             (!('host_id' in resource.data) || !('host_id' in request.resource.data) || request.resource.data.host_id == resource.data.host_id);
     }
 
     function eventUserUnchanged() {
-      return ('userId' in request.resource.data == 'userId' in resource.data) &&
-             (!('userId' in resource.data) || request.resource.data.userId == resource.data.userId) &&
-             ('user_id' in request.resource.data == 'user_id' in resource.data) &&
-             (!('user_id' in resource.data) || request.resource.data.user_id == resource.data.user_id);
+      return (!('userId' in resource.data) || !('userId' in request.resource.data) || request.resource.data.userId == resource.data.userId) &&
+             (!('user_id' in resource.data) || !('user_id' in request.resource.data) || request.resource.data.user_id == resource.data.user_id);
     }
 
     // =========================================================================
@@ -164,33 +79,21 @@ service cloud.firestore {
     // =========================================================================
 
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      
-      // Separate Create and Update permissions
-      allow create: if isOwner(userId) && hasNoProtectedFieldsOnCreate();
-      allow update: if (isOwner(userId) && protectedFieldsUnchanged()) || isAdmin();
-      allow delete: if isAdmin();
+      allow read, write: if isOwner(userId) || isAdmin();
 
       // Explicit rules for users/{userId}/settings/preferences
       match /settings/preferences {
-        allow read: if isOwner(userId) || isAdmin();
-        allow create: if isOwner(userId) && hasNoProtectedFieldsOnCreate();
-        allow update: if (isOwner(userId) && protectedFieldsUnchanged()) || isAdmin();
-        allow delete: if isAdmin();
+        allow read, write: if isOwner(userId) || isAdmin();
       }
 
       // Explicit rules for users/{userId}/events/{eventId} (FULL CRUD FOR USER)
       match /events/{eventId} {
-        allow read: if isOwner(userId) || isAdmin();
-        allow create: if isOwner(userId);
-        allow update: if (isOwner(userId) && eventOwnershipUnchanged() && eventUserUnchanged()) || isAdmin();
-        allow delete: if isOwner(userId) || isAdmin();
+        allow read, write: if isOwner(userId) || isAdmin();
       }
 
       // Explicit fallback for other subcollections under users/{userId}
       match /{subcollection=**} {
-        allow read: if isOwner(userId) || isAdmin();
-        allow write: if isAdmin();
+        allow read, write: if isOwner(userId) || isAdmin();
       }
     }
 
@@ -221,6 +124,12 @@ service cloud.firestore {
     // =========================================================================
     // 3. CELEBRATIONS & EVENTS (Ownership & Privacy Enforcement)
     // =========================================================================
+
+    // Collection Group Rule for Events across all subcollections
+    match /{path=**}/events/{eventId} {
+      allow read: if isAuthenticated();
+      allow write: if isEventOwner(resource.data) || isAdmin();
+    }
 
     match /celebrations/{celebrationId} {
       allow read: if resource.data.isPublic == true ||
