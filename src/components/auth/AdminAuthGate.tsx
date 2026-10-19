@@ -183,8 +183,19 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
                   expiresAt: Date.now() + 3600 * 1000,
                   user: adminData,
                 });
-                AdminSessionService.setLocked(false);
-                onUnlockRef.current();
+
+                // If session is locked and this was not an explicit user-initiated Google unlock, retain lock
+                if ((AdminSessionService.isLocked() || isLockedRef.current) && !isGoogleSigningInRef.current) {
+                  setAuthStatus('unauthenticated');
+                  return;
+                }
+
+                // Only clear lock state if the user explicitly initiated Google login or unlock
+                if (isGoogleSigningInRef.current) {
+                  AdminSessionService.setLocked(false);
+                  onUnlockRef.current();
+                }
+
                 onAuthenticatedRef.current(adminData);
                 setAuthStatus('verified');
                 setErrorMsg(null);
