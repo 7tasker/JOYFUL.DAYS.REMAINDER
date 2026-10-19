@@ -548,22 +548,21 @@ export const requireAdminAuth = async (
         const email = decodedToken.email.toLowerCase().trim();
         const isDesignatedAdminEmail = ROOT_ADMIN_EMAILS.includes(email);
 
-        if (decodedToken.admin === true || isDesignatedAdminEmail) {
-          if (decodedToken.uid && decodedToken.admin !== true) {
-            try {
-              await adminAuth.setCustomUserClaims(decodedToken.uid, { admin: true });
-            } catch (claimErr) {
-              // ignore
-            }
-          }
+        // Fix 4: Ensure ordinary administrative API operations requiring a Firebase claim do not
+        // accidentally bypass the claim requirement through the root-admin bootstrap allowance.
+        if (decodedToken.admin === true) {
           (req as any).user = { ...decodedToken, email, admin: true };
           return next();
         }
 
+        // If the token lacks admin: true claim, ordinary admin operations are forbidden.
+        // User must bootstrap through /api/admin/verify-or-claim and refresh token.
         return res.status(403).json({
           error: "Forbidden",
-          code: "UNAUTHORIZED",
-          message: `Administrative privileges required. ${email} is not an authorized administrator email.`,
+          code: "ADMIN_CLAIM_REQUIRED",
+          message: isDesignatedAdminEmail
+            ? "Administrative privileges require a verified admin custom claim. Please refresh token via bootstrap verification."
+            : `Administrative privileges required. ${email} is not an authorized administrator email.`,
         });
       }
     } catch (verifyErr: any) {
@@ -1310,7 +1309,37 @@ app.get("/api/admin/session", requireAdminAuth, (req, res) => {
   });
 });
 
-// 4. [ADMIN-ONLY] Admin Claim & Token Verification Endpoint
+/**
+ * Fix 3: Safely assigns the admin custom claim to an allowlisted root administrator
+ * using a read-merge-write pattern to preserve existing trusted custom claims.
+ * Avoids unnecessary repeated assignments.
+ * Never reports success if assignment failed.
+ */
+async function safelyAssignAdminClaim(adminAuth: any, uid: string): Promise<{ success: boolean; hasClaim: boolean; error?: string }> {
+  try {
+    const userRecord = await adminAuth.getUser(uid);
+    const existingClaims = (userRecord && userRecord.customClaims) || {};
+
+    if (existingClaims.admin === true) {
+      // Claim already recorded in Auth record, avoid redundant writes
+      return { success: true, hasClaim: true };
+    }
+
+    const mergedClaims = {
+      ...existingClaims,
+      admin: true,
+    };
+
+    await adminAuth.setCustomUserClaims(uid, mergedClaims);
+    return { success: true, hasClaim: true };
+  } catch (err: any) {
+    // Restricted server log diagnostics (no tokens or credentials leaked)
+    console.error(`[Admin Claim Assignment Failed] UID: ${uid}, Error:`, err?.message || err);
+    return { success: false, hasClaim: false, error: "CLAIM_ASSIGNMENT_FAILED" };
+  }
+}
+
+// 4. [ADMIN-ONLY] Admin Claim & Token Verification Endpoint (Restricted Bootstrap Flow)
 app.post("/api/admin/verify-or-claim", async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -1331,15 +1360,18 @@ app.post("/api/admin/verify-or-claim", async (req, res) => {
     const email = decodedToken.email.toLowerCase().trim();
     const isDesignatedAdminEmail = ROOT_ADMIN_EMAILS.includes(email);
 
-    if (decodedToken.admin === true || isDesignatedAdminEmail) {
-      if (getAdminApps().length && decodedToken.uid && decodedToken.admin !== true) {
-        try {
-          const adminAuth = getAdminAuth();
-          await adminAuth.setCustomUserClaims(decodedToken.uid, { admin: true });
-        } catch (claimErr: any) {
-          console.warn("[Admin Claim Warning]: Notice during claim assignment:", claimErr?.message || claimErr);
-        }
-      }
+    // Reject unauthorized Google users immediately
+    if (!isDesignatedAdminEmail && decodedToken.admin !== true) {
+      return res.status(403).json({
+        success: false,
+        isAdmin: false,
+        hasClaim: false,
+        error: `Email ${email} is not authorized in ROOT_ADMIN_EMAILS for administrative access.`,
+      });
+    }
+
+    // If the token already carries verified admin claim, avoid unnecessary repeated assignment
+    if (decodedToken.admin === true) {
       return res.json({
         success: true,
         isAdmin: true,
@@ -1349,10 +1381,35 @@ app.post("/api/admin/verify-or-claim", async (req, res) => {
       });
     }
 
+    // Only allowlisted root admins can bootstrap and acquire the admin claim
+    if (isDesignatedAdminEmail && decodedToken.uid) {
+      const claimResult = await safelyAssignAdminClaim(adminAuth, decodedToken.uid);
+
+      if (!claimResult.success || !claimResult.hasClaim) {
+        // Fix 1: Never report successful claim assignment if it failed. Return explicit failure code.
+        return res.status(500).json({
+          success: false,
+          isAdmin: false,
+          hasClaim: false,
+          error: "CLAIM_ASSIGNMENT_FAILED",
+          message: "Failed to assign administrative claim to user account.",
+        });
+      }
+
+      return res.json({
+        success: true,
+        isAdmin: true,
+        uid: decodedToken.uid,
+        hasClaim: true,
+        email,
+      });
+    }
+
     return res.status(403).json({
       success: false,
       isAdmin: false,
-      error: `Email ${email} is not authorized in ROOT_ADMIN_EMAILS for administrative access.`,
+      hasClaim: false,
+      error: `Email ${email} is not authorized for administrative access.`,
     });
   } catch (err: any) {
     return res.status(401).json({ success: false, error: err?.message || "Invalid token" });
@@ -2484,7 +2541,11 @@ async function runAuthenticatedFirestoreRestQuery(rawToken: string, collectionId
 
   if (!res.ok) {
     const errBody = await res.text();
-    throw new Error(`Firestore REST query failed [${res.status}]: ${errBody}`);
+    const error: any = new Error(`Firestore REST query failed [${res.status}]`);
+    error.status = res.status;
+    error.statusCode = res.status;
+    console.warn(`[Firestore REST Query Error] status: ${res.status}`);
+    throw error;
   }
 
   const results = await res.json();
@@ -2559,7 +2620,24 @@ app.get("/api/analytics/summary", requireAdminAuth, async (req, res) => {
       try {
         prefsDocs = await runAuthenticatedFirestoreRestQuery(rawToken, "preferences", true);
       } catch (err: any) {
-        console.warn("[Analytics Summary] REST Query Notice:", err?.message || err);
+        console.error("[Analytics Summary] Preferences REST Query failed:", err?.message || err);
+        const errStatus = (err as any)?.status || (err as any)?.statusCode || 502;
+        const isPermissionDenied = errStatus === 403 || (err?.message && err.message.includes("403"));
+        const isUnauthorized = errStatus === 401 || (err?.message && err.message.includes("401"));
+
+        // Fix 5: Never silently replace query failure with zero records.
+        // Return an explicit API error with appropriate HTTP status without leaking internal tokens or keys.
+        return res.status(isPermissionDenied ? 403 : isUnauthorized ? 401 : 502).json({
+          success: false,
+          error: isPermissionDenied
+            ? "FIRESTORE_PERMISSION_DENIED"
+            : isUnauthorized
+            ? "FIRESTORE_UNAUTHORIZED"
+            : "FIRESTORE_QUERY_FAILED",
+          message: isPermissionDenied
+            ? "Access to user preferences collection group denied by Firestore security rules. Verified administrator claim required."
+            : "Failed to query preferences records from Firestore.",
+        });
       }
     }
 

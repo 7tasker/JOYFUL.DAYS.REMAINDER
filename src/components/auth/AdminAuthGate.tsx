@@ -76,29 +76,35 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
           });
           if (res.ok) {
             const data = await res.json();
-            if (data.isAdmin) {
-              const freshToken = await user.getIdToken(true); // refresh token to capture claims
-              const baseAdmin = StorageService.getAdminUser() || INITIAL_ADMIN_USER;
-              const adminData: AdminUser = {
-                ...baseAdmin,
-                email: user.email,
-                name: user.displayName || baseAdmin.name || 'Administrator',
-                lastLogin: new Date().toISOString(),
-              };
-              AdminSessionService.saveSession({
-                token: freshToken,
-                expiresAt: Date.now() + 3600 * 1000,
-                user: adminData,
-              });
-              onAuthenticatedRef.current(adminData);
+            if (data.isAdmin && data.hasClaim) {
+              // Fix 2: Verify actual refreshed token claims via getIdTokenResult(true)
+              const tokenResult = await user.getIdTokenResult(true);
+              if (tokenResult.claims.admin === true) {
+                const baseAdmin = StorageService.getAdminUser() || INITIAL_ADMIN_USER;
+                const adminData: AdminUser = {
+                  ...baseAdmin,
+                  email: user.email,
+                  name: user.displayName || baseAdmin.name || 'Administrator',
+                  lastLogin: new Date().toISOString(),
+                };
+                AdminSessionService.saveSession({
+                  token: tokenResult.token,
+                  expiresAt: Date.now() + 3600 * 1000,
+                  user: adminData,
+                });
+                onAuthenticatedRef.current(adminData);
+              } else {
+                AdminSessionService.clearSession();
+                setErrorMsg('Account token does not contain verified admin claim (admin: true). Access denied.');
+              }
             } else {
               AdminSessionService.clearSession();
-              setErrorMsg('Account does not possess verified admin privileges.');
+              setErrorMsg(data.message || data.error || 'Account does not possess verified admin privileges.');
             }
           } else {
             const errData = await res.json().catch(() => ({}));
             AdminSessionService.clearSession();
-            setErrorMsg(errData.error || errData.message || 'Server denied administrative authorization.');
+            setErrorMsg(errData.message || errData.error || 'Server denied administrative authorization.');
           }
         } catch (err: any) {
           console.warn('[AuthGate] Re-verification notice:', err?.message);
@@ -112,8 +118,11 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
     return () => unsubscribe();
   }, []);
 
-  // If already authenticated and NOT locked, render children
-  if (currentUser && StorageService.isAuthorizedAdmin(currentUser.email) && !isLocked) {
+  // Session validation. Active admin session must be present, non-expired, and match authorized admin user.
+  const activeSession = AdminSessionService.getSession();
+  const hasActiveSession = Boolean(activeSession && AdminSessionService.isSessionValid());
+
+  if (currentUser && StorageService.isAuthorizedAdmin(currentUser.email) && !isLocked && hasActiveSession) {
     return <>{children}</>;
   }
 
@@ -139,17 +148,23 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
       if (!verifyRes.ok) {
         const errData = await verifyRes.json().catch(() => ({}));
         await signOut(auth);
-        throw new Error(errData.error || errData.message || 'Server denied administrative authorization.');
+        throw new Error(errData.message || errData.error || 'Server denied administrative authorization.');
       }
 
       const verifyData = await verifyRes.json();
-      if (!verifyData.isAdmin) {
+      if (!verifyData.isAdmin || !verifyData.hasClaim) {
         await signOut(auth);
-        throw new Error('Account does not possess verified admin privileges.');
+        throw new Error(verifyData.message || verifyData.error || 'Account does not possess verified admin privileges.');
       }
 
-      // Await getIdToken(true) so client JWT contains refreshed admin claim
-      const refreshedToken = await user.getIdToken(true);
+      // Fix 2: Await getIdTokenResult(true) to verify that claims.admin is true on refreshed token
+      const tokenResult = await user.getIdTokenResult(true);
+      if (tokenResult.claims.admin !== true) {
+        await signOut(auth);
+        AdminSessionService.clearSession();
+        throw new Error('Administrative privileges require a verified admin: true claim. Refreshed token claim verification failed.');
+      }
+      const refreshedToken = tokenResult.token;
 
       const baseAdmin = StorageService.getAdminUser() || INITIAL_ADMIN_USER;
       const adminData: AdminUser = {
@@ -159,7 +174,7 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
         lastLogin: new Date().toISOString(),
       };
       
-      // Save session with fresh Firebase Auth ID Token
+      // Save session with fresh Firebase Auth ID Token containing verified admin claim
       AdminSessionService.saveSession({
         token: refreshedToken,
         expiresAt: Date.now() + 3600 * 1000,
