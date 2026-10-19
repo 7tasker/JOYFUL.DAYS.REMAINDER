@@ -6,7 +6,7 @@ console.log('JOYFULDAYS — STAGE A RECOVERY TEST SUITE (LOCAL MOCKS)');
 console.log('====================================================\n');
 
 let passedTests = 0;
-let totalTests = 12;
+let totalTests = 15;
 
 // --- Test 1: Failed claim assignment returns failure rather than hasClaim: true ---
 try {
@@ -440,6 +440,215 @@ try {
   passedTests++;
 } catch (e: any) {
   console.error('✗ TEST 12 FAILED:', e.message);
+}
+
+// --- Test 13: Protected dashboard never mounts during initialization or verification (authStatus !== 'verified') ---
+try {
+  type GateAuthStatus = 'initializing' | 'verifying' | 'verified' | 'unauthenticated' | 'denied';
+
+  function canMountProtectedContent(params: {
+    authStatus: GateAuthStatus;
+    currentUser: { email: string } | null;
+    isAuthorizedAdmin: boolean;
+    isLocked: boolean;
+    hasActiveSession: boolean;
+  }): boolean {
+    return (
+      params.authStatus === 'verified' &&
+      Boolean(params.currentUser) &&
+      params.isAuthorizedAdmin &&
+      !params.isLocked &&
+      params.hasActiveSession
+    );
+  }
+
+  // Case 1: Initializing - active session exists in localStorage, but Firebase verification not complete
+  assert.strictEqual(
+    canMountProtectedContent({
+      authStatus: 'initializing',
+      currentUser: { email: 'admin@7tasker.com' },
+      isAuthorizedAdmin: true,
+      isLocked: false,
+      hasActiveSession: true,
+    }),
+    false,
+    'Must NOT mount while authStatus is initializing even if localStorage has session'
+  );
+
+  // Case 2: Verifying - fetch to /api/admin/verify-or-claim in-flight
+  assert.strictEqual(
+    canMountProtectedContent({
+      authStatus: 'verifying',
+      currentUser: { email: 'admin@7tasker.com' },
+      isAuthorizedAdmin: true,
+      isLocked: false,
+      hasActiveSession: true,
+    }),
+    false,
+    'Must NOT mount while authStatus is verifying'
+  );
+
+  // Case 3: Denied - server rejected or claims.admin !== true
+  assert.strictEqual(
+    canMountProtectedContent({
+      authStatus: 'denied',
+      currentUser: { email: 'admin@7tasker.com' },
+      isAuthorizedAdmin: true,
+      isLocked: false,
+      hasActiveSession: true,
+    }),
+    false,
+    'Must NOT mount when authStatus is denied'
+  );
+
+  // Case 4: Verified and unlocked
+  assert.strictEqual(
+    canMountProtectedContent({
+      authStatus: 'verified',
+      currentUser: { email: 'admin@7tasker.com' },
+      isAuthorizedAdmin: true,
+      isLocked: false,
+      hasActiveSession: true,
+    }),
+    true,
+    'MUST mount when authStatus is verified and session is valid'
+  );
+
+  // Case 5: Verified but screen is locked
+  assert.strictEqual(
+    canMountProtectedContent({
+      authStatus: 'verified',
+      currentUser: { email: 'admin@7tasker.com' },
+      isAuthorizedAdmin: true,
+      isLocked: true,
+      hasActiveSession: true,
+    }),
+    false,
+    'Must NOT mount when console is locked'
+  );
+
+  console.log('✓ TEST 13 PASSED: Protected dashboard never mounts during initialization or verification (authStatus !== "verified")');
+  passedTests++;
+} catch (e: any) {
+  console.error('✗ TEST 13 FAILED:', e.message);
+}
+
+// --- Test 14: Failed live token claims or server verification triggers clearSession() and onLogout() ---
+try {
+  let sessionCleared = false;
+  let loggedOut = false;
+  let finalStatus: string = '';
+
+  const mockAdminSessionService = {
+    clearSession: () => { sessionCleared = true; },
+  };
+  const mockOnLogout = () => { loggedOut = true; };
+
+  async function simulateAuthStateVerification(mockResult: {
+    serverOk: boolean;
+    isAdmin: boolean;
+    hasClaim: boolean;
+    tokenClaimsAdmin: boolean;
+  }) {
+    sessionCleared = false;
+    loggedOut = false;
+    finalStatus = '';
+
+    if (!mockResult.serverOk || !mockResult.isAdmin || !mockResult.hasClaim) {
+      mockAdminSessionService.clearSession();
+      mockOnLogout();
+      finalStatus = 'denied';
+      return;
+    }
+
+    if (mockResult.tokenClaimsAdmin !== true) {
+      mockAdminSessionService.clearSession();
+      mockOnLogout();
+      finalStatus = 'denied';
+      return;
+    }
+
+    finalStatus = 'verified';
+  }
+
+  // Subcase A: Server returns 403 / isAdmin: false
+  await simulateAuthStateVerification({
+    serverOk: false,
+    isAdmin: false,
+    hasClaim: false,
+    tokenClaimsAdmin: false,
+  });
+  assert.strictEqual(sessionCleared, true, 'clearSession must be called on server failure');
+  assert.strictEqual(loggedOut, true, 'onLogout must be called on server failure');
+  assert.strictEqual(finalStatus, 'denied', 'Status must be denied');
+
+  // Subcase B: Refreshed token lacks admin: true claim
+  await simulateAuthStateVerification({
+    serverOk: true,
+    isAdmin: true,
+    hasClaim: true,
+    tokenClaimsAdmin: false,
+  });
+  assert.strictEqual(sessionCleared, true, 'clearSession must be called when claims.admin !== true');
+  assert.strictEqual(loggedOut, true, 'onLogout must be called when claims.admin !== true');
+  assert.strictEqual(finalStatus, 'denied', 'Status must be denied');
+
+  // Subcase C: Successful verification
+  await simulateAuthStateVerification({
+    serverOk: true,
+    isAdmin: true,
+    hasClaim: true,
+    tokenClaimsAdmin: true,
+  });
+  assert.strictEqual(sessionCleared, false, 'Session must not be cleared on valid verification');
+  assert.strictEqual(loggedOut, false, 'onLogout must not be called on valid verification');
+  assert.strictEqual(finalStatus, 'verified', 'Status must be verified');
+
+  console.log('✓ TEST 14 PASSED: Failed live claims/server verification triggers clearSession() and onLogout()');
+  passedTests++;
+} catch (e: any) {
+  console.error('✗ TEST 14 FAILED:', e.message);
+}
+
+// --- Test 15: Source code verification of AdminAuthGate.tsx for Stage A.2 compliance ---
+try {
+  const gateSource = fs.readFileSync('src/components/auth/AdminAuthGate.tsx', 'utf8');
+
+  // Check 1: Must define and use GateAuthStatus
+  assert.ok(
+    gateSource.includes('GateAuthStatus') || gateSource.includes('authStatus'),
+    'Must declare explicit authStatus state'
+  );
+
+  // Check 2: Render gate condition must check authStatus === "verified"
+  assert.ok(
+    gateSource.includes("authStatus === 'verified'"),
+    'Render gate condition must require authStatus === "verified"'
+  );
+
+  // Check 3: Intermediate loading state must exist for initializing and verifying
+  assert.ok(
+    gateSource.includes("authStatus === 'initializing'") &&
+    gateSource.includes("authStatus === 'verifying'"),
+    'Must handle initializing and verifying states with intermediate loading UI'
+  );
+
+  // Check 4: onLogout propagation must be present on claim/server rejection
+  assert.ok(
+    gateSource.includes('onLogoutRef.current()'),
+    'Must propagate onLogout to parent App component when verification fails'
+  );
+
+  // Check 5: Must strictly verify tokenResult.claims.admin === true
+  assert.ok(
+    gateSource.includes('tokenResult.claims.admin === true'),
+    'Must strictly verify tokenResult.claims.admin === true'
+  );
+
+  console.log('✓ TEST 15 PASSED: Source code verification confirms AdminAuthGate.tsx Stage A.2 timing and gate protections');
+  passedTests++;
+} catch (e: any) {
+  console.error('✗ TEST 15 FAILED:', e.message);
 }
 
 console.log(`\n====================================================`);

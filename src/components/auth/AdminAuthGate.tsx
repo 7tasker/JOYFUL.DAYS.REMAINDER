@@ -21,6 +21,8 @@ interface AdminAuthGateProps {
   children: React.ReactNode;
 }
 
+export type GateAuthStatus = 'initializing' | 'verifying' | 'verified' | 'unauthenticated' | 'denied';
+
 export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
   currentUser,
   isLocked,
@@ -30,6 +32,7 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
   onLogout,
   children,
 }) => {
+  const [authStatus, setAuthStatus] = useState<GateAuthStatus>('initializing');
   const [errorMsg, setErrorMsg] = useState<string | null>(sessionExpiredNotice || null);
   const [successInfoMsg, setSuccessInfoMsg] = useState<string | null>(null);
   const [isGoogleSigningIn, setIsGoogleSigningIn] = useState<boolean>(false);
@@ -40,31 +43,52 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
     onAuthenticatedRef.current = onAuthenticated;
   }, [onAuthenticated]);
 
+  const onLogoutRef = useRef(onLogout);
+  useEffect(() => {
+    onLogoutRef.current = onLogout;
+  }, [onLogout]);
+
+  const isLockedRef = useRef(isLocked);
+  useEffect(() => {
+    isLockedRef.current = isLocked;
+  }, [isLocked]);
+
+  const currentUserRef = useRef(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
   useEffect(() => {
     if (sessionExpiredNotice) {
       setErrorMsg(sessionExpiredNotice);
+      setAuthStatus('unauthenticated');
     }
   }, [sessionExpiredNotice]);
 
   useEffect(() => {
     const unsub = AdminSessionService.onSessionExpired((msg) => {
       setErrorMsg(msg);
+      setAuthStatus('unauthenticated');
+      onLogoutRef.current();
     });
     return () => unsub();
   }, []);
 
-  // Monitor Firebase Auth state with stable listener
+  // Monitor Firebase Auth state with verified claim requirement before mounting
   const isVerifyingRef = useRef(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user && user.email) {
         setFirebaseUserEmail(user.email);
-        if (AdminSessionService.isLocked()) {
+        if (AdminSessionService.isLocked() || isLockedRef.current) {
+          setAuthStatus('unauthenticated');
           return;
         }
         if (isVerifyingRef.current) return;
         isVerifyingRef.current = true;
+        setAuthStatus('verifying');
+
         try {
           const idToken = await user.getIdToken();
           const res = await fetch('/api/admin/verify-or-claim', {
@@ -74,10 +98,11 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
               Authorization: `Bearer ${idToken}`,
             },
           });
+
           if (res.ok) {
             const data = await res.json();
             if (data.isAdmin && data.hasClaim) {
-              // Fix 2: Verify actual refreshed token claims via getIdTokenResult(true)
+              // Verify actual refreshed token claims via getIdTokenResult(true)
               const tokenResult = await user.getIdTokenResult(true);
               if (tokenResult.claims.admin === true) {
                 const baseAdmin = StorageService.getAdminUser() || INITIAL_ADMIN_USER;
@@ -93,26 +118,45 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
                   user: adminData,
                 });
                 onAuthenticatedRef.current(adminData);
+                setAuthStatus('verified');
+                setErrorMsg(null);
               } else {
                 AdminSessionService.clearSession();
+                onLogoutRef.current();
+                setAuthStatus('denied');
                 setErrorMsg('Account token does not contain verified admin claim (admin: true). Access denied.');
               }
             } else {
               AdminSessionService.clearSession();
+              onLogoutRef.current();
+              setAuthStatus('denied');
               setErrorMsg(data.message || data.error || 'Account does not possess verified admin privileges.');
             }
           } else {
             const errData = await res.json().catch(() => ({}));
             AdminSessionService.clearSession();
+            onLogoutRef.current();
+            setAuthStatus('denied');
             setErrorMsg(errData.message || errData.error || 'Server denied administrative authorization.');
           }
         } catch (err: any) {
           console.warn('[AuthGate] Re-verification notice:', err?.message);
+          AdminSessionService.clearSession();
+          onLogoutRef.current();
+          setAuthStatus('denied');
+          setErrorMsg(err?.message || 'Verification of administrative credentials failed.');
         } finally {
           isVerifyingRef.current = false;
         }
       } else {
         setFirebaseUserEmail(null);
+        // User is not signed in to Firebase: clear any unverified or stale sessions
+        if (AdminSessionService.getSession() || currentUserRef.current) {
+          AdminSessionService.clearSession();
+          onLogoutRef.current();
+        }
+        setAuthStatus('unauthenticated');
+        isVerifyingRef.current = false;
       }
     });
     return () => unsubscribe();
@@ -122,7 +166,14 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
   const activeSession = AdminSessionService.getSession();
   const hasActiveSession = Boolean(activeSession && AdminSessionService.isSessionValid());
 
-  if (currentUser && StorageService.isAuthorizedAdmin(currentUser.email) && !isLocked && hasActiveSession) {
+  // Protected content is NEVER mounted until live Firebase user claims are strictly verified
+  if (
+    authStatus === 'verified' &&
+    currentUser &&
+    StorageService.isAuthorizedAdmin(currentUser.email) &&
+    !isLocked &&
+    hasActiveSession
+  ) {
     return <>{children}</>;
   }
 
@@ -148,20 +199,28 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
       if (!verifyRes.ok) {
         const errData = await verifyRes.json().catch(() => ({}));
         await signOut(auth);
+        AdminSessionService.clearSession();
+        onLogoutRef.current();
+        setAuthStatus('denied');
         throw new Error(errData.message || errData.error || 'Server denied administrative authorization.');
       }
 
       const verifyData = await verifyRes.json();
       if (!verifyData.isAdmin || !verifyData.hasClaim) {
         await signOut(auth);
+        AdminSessionService.clearSession();
+        onLogoutRef.current();
+        setAuthStatus('denied');
         throw new Error(verifyData.message || verifyData.error || 'Account does not possess verified admin privileges.');
       }
 
-      // Fix 2: Await getIdTokenResult(true) to verify that claims.admin is true on refreshed token
+      // Verify that claims.admin is true on refreshed token
       const tokenResult = await user.getIdTokenResult(true);
       if (tokenResult.claims.admin !== true) {
         await signOut(auth);
         AdminSessionService.clearSession();
+        onLogoutRef.current();
+        setAuthStatus('denied');
         throw new Error('Administrative privileges require a verified admin: true claim. Refreshed token claim verification failed.');
       }
       const refreshedToken = tokenResult.token;
@@ -193,13 +252,64 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
       });
 
       setSuccessInfoMsg('Google OAuth ID Token verified with admin claim by server.');
+      setAuthStatus('verified');
       onAuthenticated(adminData);
     } catch (err: any) {
       console.warn('[Auth] Google Sign-In error:', err?.message);
       setErrorMsg(err?.message || 'Failed to authenticate via Google Firebase Auth.');
+      setAuthStatus('denied');
     } finally {
       setIsGoogleSigningIn(false);
     }
+  };
+
+  const handleManualLogout = () => {
+    setAuthStatus('unauthenticated');
+    setErrorMsg(null);
+    onLogout();
+  };
+
+  // Intermediate loading state while verifying live authentication credentials
+  if (authStatus === 'initializing' || authStatus === 'verifying') {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center items-center p-4 selection:bg-rose-500 selection:text-white">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.15),rgba(255,255,255,0))] pointer-events-none" />
+
+        <div className="w-full max-w-md relative z-10 text-center">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-500 via-rose-500 to-indigo-600 shadow-xl shadow-rose-950/50 mb-4 ring-1 ring-white/20">
+            <span className="text-2xl font-black tracking-wider text-white">JD</span>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center justify-center gap-2">
+            JoyfulDays
+            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/30">
+              Admin Portal
+            </span>
+          </h1>
+          <p className="text-sm text-slate-400 mt-1 mb-6">
+            Celebration Platform Administrative Console
+          </p>
+
+          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-8 shadow-2xl backdrop-blur-xl ring-1 ring-white/5 flex flex-col items-center">
+            <div className="w-9 h-9 border-2 border-rose-500/30 border-t-rose-500 rounded-full animate-spin mb-4" />
+            <h2 className="text-sm font-semibold text-slate-200">
+              Verifying Administrative Authority
+            </h2>
+            <p className="text-xs text-slate-400 mt-1.5 leading-relaxed text-center">
+              Validating live Firebase credentials and server-issued custom claims before mounting console.
+            </p>
+          </div>
+
+          <div className="mt-6 text-center text-xs text-slate-500 flex items-center justify-center gap-4">
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+              Security Handshake Active
+            </span>
+            <span>•</span>
+            <span>Zero-Trust Gate</span>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -248,7 +358,7 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
               </div>
               <button
                 type="button"
-                onClick={onLogout}
+                onClick={handleManualLogout}
                 className="text-[11px] px-2.5 py-1 rounded bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 font-medium transition-colors cursor-pointer"
               >
                 Sign Out
@@ -304,7 +414,7 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
             <div className="mt-4 pt-3 border-t border-slate-800 text-center">
               <button
                 type="button"
-                onClick={onLogout}
+                onClick={handleManualLogout}
                 className="text-xs text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
               >
                 Sign out of current account
