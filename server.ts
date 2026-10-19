@@ -2443,11 +2443,99 @@ app.post("/api/create-checkout-session", async (req, res) => {
   }
 });
 
+// Firestore REST API Value Decoder & Query Helper for Authenticated Admin Reads
+function decodeFirestoreRestValue(fieldVal: any): any {
+  if (!fieldVal || typeof fieldVal !== "object") return null;
+  if ("stringValue" in fieldVal) return fieldVal.stringValue;
+  if ("booleanValue" in fieldVal) return fieldVal.booleanValue;
+  if ("integerValue" in fieldVal) return parseInt(fieldVal.integerValue, 10);
+  if ("doubleValue" in fieldVal) return parseFloat(fieldVal.doubleValue);
+  if ("timestampValue" in fieldVal) return fieldVal.timestampValue;
+  if ("nullValue" in fieldVal) return null;
+  if ("mapValue" in fieldVal) {
+    const mapFields = fieldVal.mapValue?.fields || {};
+    const decodedMap: Record<string, any> = {};
+    Object.keys(mapFields).forEach((k) => {
+      decodedMap[k] = decodeFirestoreRestValue(mapFields[k]);
+    });
+    return decodedMap;
+  }
+  if ("arrayValue" in fieldVal) {
+    const values = fieldVal.arrayValue?.values || [];
+    return values.map(decodeFirestoreRestValue);
+  }
+  return null;
+}
+
+async function runAuthenticatedFirestoreRestQuery(rawToken: string, collectionId: string, allDescendants: boolean = false) {
+  const url = `https://firestore.googleapis.com/v1/projects/joyful-days/databases/ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1/documents:runQuery?key=${FIREBASE_API_KEY}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${rawToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId, allDescendants }]
+      }
+    })
+  });
+
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Firestore REST query failed [${res.status}]: ${errBody}`);
+  }
+
+  const results = await res.json();
+  if (!Array.isArray(results)) return [];
+
+  return results
+    .filter((item: any) => item && item.document && item.document.fields)
+    .map((item: any) => {
+      const docPath = item.document.name || "";
+      const id = docPath.split("/").pop() || "";
+      const fields = item.document.fields || {};
+      const parsedData: Record<string, any> = {};
+
+      Object.keys(fields).forEach((key) => {
+        parsedData[key] = decodeFirestoreRestValue(fields[key]);
+      });
+
+      return {
+        id,
+        path: docPath,
+        data: parsedData,
+      };
+    });
+}
+
 // 19. [ADMIN-ONLY] Analytics Summary Endpoint (Remove Ads & Advanced Features)
 app.get("/api/analytics/summary", requireAdminAuth, async (req, res) => {
   try {
-    const removeAdsDoc = await db.collection("analytics").doc("remove_ads").get();
-    const rawData = removeAdsDoc.exists ? (removeAdsDoc.data() || {}) : {};
+    const authHeader = req.headers.authorization || "";
+    const rawToken = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : "";
+    const dotCount = (rawToken.match(/\./g) || []).length;
+
+    let rawData: any = {};
+    if (rawToken && dotCount === 2) {
+      try {
+        const removeAdsUrl = `https://firestore.googleapis.com/v1/projects/joyful-days/databases/ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1/documents/analytics/remove_ads?key=${FIREBASE_API_KEY}`;
+        const removeAdsRes = await fetch(removeAdsUrl, {
+          headers: { Authorization: `Bearer ${rawToken}` },
+        });
+        if (removeAdsRes.ok) {
+          const jsonDoc = await removeAdsRes.json();
+          if (jsonDoc && jsonDoc.fields) {
+            Object.keys(jsonDoc.fields).forEach((k) => {
+              rawData[k] = decodeFirestoreRestValue(jsonDoc.fields[k]);
+            });
+          }
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
 
     const removeAdsStats = {
       totalRemoveAdsPayments: Number(rawData.totalRemoveAdsPayments || 0),
@@ -2466,11 +2554,19 @@ app.get("/api/analytics/summary", requireAdminAuth, async (req, res) => {
     let usersCompleted3Ads = 0;
     let totalAdvancedFeaturesUnlocked = 0;
 
-    const prefsSnapshot = await db.collectionGroup("preferences").get();
-    for (const prefDoc of prefsSnapshot.docs) {
-      const path = prefDoc.ref.path;
-      if (path.startsWith("users/") && path.includes("/settings/preferences")) {
-        const pData = prefDoc.data() || {};
+    let prefsDocs: Array<{ id: string; path: string; data: any }> = [];
+    if (rawToken && dotCount === 2) {
+      try {
+        prefsDocs = await runAuthenticatedFirestoreRestQuery(rawToken, "preferences", true);
+      } catch (err: any) {
+        console.warn("[Analytics Summary] REST Query Notice:", err?.message || err);
+      }
+    }
+
+    for (const prefDoc of prefsDocs) {
+      const path = prefDoc.path;
+      if (path.includes("/settings/preferences")) {
+        const pData = prefDoc.data || {};
         const watched = Number(pData.advancedFeaturesRewardAdsWatched || 0);
         const unlocked = Boolean(pData.advancedFeaturesUnlocked);
 
@@ -2487,50 +2583,12 @@ app.get("/api/analytics/summary", requireAdminAuth, async (req, res) => {
         if (unlocked) {
           totalAdvancedFeaturesUnlocked++;
         }
-        // Sync individual user document to analytics/monetization_stats/users/{uid}
-        const userUidMatch = path.match(/^users\/([^/]+)\/settings\/preferences/);
-        if (userUidMatch && userUidMatch[1]) {
-          const userUid = userUidMatch[1];
-          const userEmail = pData.userEmail || pData.email || `${userUid}@joyfuldays.app`;
-          await db.collection("analytics").doc("monetization_stats").collection("users").doc(userUid).set({
-            uid: userUid,
-            userEmail,
-            adsWatchedCount: watched,
-            isUnlocked: unlocked || Boolean(pData.removeAdsLifetime),
-            removeAdsLifetime: Boolean(pData.removeAdsLifetime),
-            transactionId: pData.transactionId || pData.removeAdsStripeSessionId || null,
-            paymentIntentId: pData.paymentIntentId || null,
-            amountPaid: pData.amountPaid || null,
-            amountFormatted: pData.amountFormatted || (pData.removeAdsLifetime ? "$1.00 USD" : null),
-            currency: pData.currency || "USD",
-            purchasedAt: pData.purchasedAt || (pData.removeAdsPurchasedAt ? new Date(pData.removeAdsPurchasedAt).toISOString() : null),
-            lastUpdatedAt: new Date().toISOString(),
-            unlockedAt: unlocked ? (pData.unlockedAt || new Date().toISOString()) : null,
-          }, { merge: true });
-        }
       }
     }
 
     const unlockConversionRate = usersStartedUnlock > 0
       ? Number(((totalAdvancedFeaturesUnlocked / usersStartedUnlock) * 100).toFixed(1))
       : 0.0;
-
-    // Update analytics/monetization_stats/summary/overview document in Firestore
-    await db.collection("analytics").doc("monetization_stats").collection("summary").doc("overview").set({
-      totalAdvancedUnlocks: totalAdvancedFeaturesUnlocked,
-      lastUpdated: new Date().toISOString(),
-    }, { merge: true });
-
-    // Update legacy analytics/monetization_stats document in Firestore for backwards compatibility
-    await db.collection("analytics").doc("monetization_stats").set({
-      startedCount: usersStartedUnlock,
-      completed2AdsCount: usersCompleted2Ads,
-      unlockedCount: totalAdvancedFeaturesUnlocked,
-      totalPayments: removeAdsStats.totalRemoveAdsPayments || 0,
-      grossRevenue: removeAdsStats.totalRemoveAdsRevenue || 0,
-      conversionRate: unlockConversionRate,
-      lastUpdated: new Date().toISOString(),
-    }, { merge: true });
 
     res.json({
       success: true,
@@ -2627,6 +2685,10 @@ app.post("/api/analytics/init-collections", requireAdminAuth, async (req, res) =
 // 21. [ADMIN-ONLY] GET /api/stripe/transactions - Stripe Transaction History Ledger API
 app.get("/api/stripe/transactions", requireAdminAuth, async (req, res) => {
   try {
+    const authHeader = req.headers.authorization || "";
+    const rawToken = authHeader.startsWith("Bearer ") ? authHeader.substring(7).trim() : "";
+    const dotCount = (rawToken.match(/\./g) || []).length;
+
     const limitNum = Math.min(Math.max(parseInt((req.query.limit as string) || "25", 10), 1), 100);
     const statusFilter = (req.query.status as string) || "all";
     const currencyFilter = ((req.query.currency as string) || "all").toUpperCase();
@@ -2634,12 +2696,19 @@ app.get("/api/stripe/transactions", requireAdminAuth, async (req, res) => {
     const endDate = req.query.endDate as string | undefined;
     const searchQuery = ((req.query.search as string) || "").toLowerCase().trim();
 
-    // Fetch transactions from stripe_transactions collection
-    const snap = await db.collection("stripe_transactions").get();
-    let records: any[] = [];
+    // Fetch transactions via authenticated Firestore REST query
+    let stripeDocs: Array<{ id: string; path: string; data: any }> = [];
+    if (rawToken && dotCount === 2) {
+      try {
+        stripeDocs = await runAuthenticatedFirestoreRestQuery(rawToken, "stripe_transactions", false);
+      } catch (err: any) {
+        console.warn("[Stripe Transactions] REST Query Notice:", err?.message || err);
+      }
+    }
 
-    snap.docs.forEach((docSnap) => {
-      const data = docSnap.data();
+    let records: any[] = [];
+    stripeDocs.forEach((docSnap) => {
+      const data = docSnap.data || {};
       records.push({
         id: docSnap.id,
         stripeEventId: data.stripeEventId || docSnap.id,
@@ -2655,9 +2724,9 @@ app.get("/api/stripe/transactions", requireAdminAuth, async (req, res) => {
         paymentStatus: data.paymentStatus || "paid",
         checkoutStatus: data.checkoutStatus || "complete",
         paymentMethodType: data.paymentMethodType || "card",
-        stripeEventTimestamp: data.stripeEventTimestamp || (data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString()),
+        stripeEventTimestamp: data.stripeEventTimestamp || data.createdAt || new Date().toISOString(),
         paymentCompletionTimestamp: data.paymentCompletionTimestamp || null,
-        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : null,
+        createdAt: data.createdAt || null,
         refundStatus: data.refundStatus || "none",
         refundedAmount: Number(data.refundedAmount || 0),
         source: data.source || "STRIPE_VERIFIED_WEBHOOK",

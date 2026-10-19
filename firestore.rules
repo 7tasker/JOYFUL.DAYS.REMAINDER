@@ -273,6 +273,11 @@ service cloud.firestore {
       allow read: if isEventOwner(resource.data) || isAdmin();
     }
 
+    // Collection-Group Rule for User Preferences (Admin Read Access for Monetization Analytics)
+    match /{path=**}/preferences/{prefId} {
+      allow read: if isAdmin();
+    }
+
     match /celebrations/{celebrationId} {
       allow read: if resource.data.isPublic == true ||
                      isEventOwner(resource.data) ||
