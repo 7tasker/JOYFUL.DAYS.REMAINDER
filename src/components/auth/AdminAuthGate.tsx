@@ -38,6 +38,20 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
   const [isGoogleSigningIn, setIsGoogleSigningIn] = useState<boolean>(false);
   const [, setFirebaseUserEmail] = useState<string | null>(null);
 
+  // Generation counter and mounting tracking to eliminate asynchronous race conditions
+  const verificationGenRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+  const activeUserUidRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      // Invalidate any pending verifications on unmount
+      verificationGenRef.current += 1;
+    };
+  }, []);
+
   const onAuthenticatedRef = useRef(onAuthenticated);
   useEffect(() => {
     onAuthenticatedRef.current = onAuthenticated;
@@ -58,8 +72,20 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
     currentUserRef.current = currentUser;
   }, [currentUser]);
 
+  // Helper to ensure an asynchronous callback still belongs to the active attempt and current Firebase user
+  const isAttemptActive = (gen: number, expectedUid: string): boolean => {
+    return (
+      isMountedRef.current &&
+      gen === verificationGenRef.current &&
+      activeUserUidRef.current === expectedUid &&
+      auth.currentUser?.uid === expectedUid
+    );
+  };
+
   useEffect(() => {
     if (sessionExpiredNotice) {
+      verificationGenRef.current += 1;
+      activeUserUidRef.current = null;
       setErrorMsg(sessionExpiredNotice);
       setAuthStatus('unauthenticated');
     }
@@ -67,6 +93,9 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
 
   useEffect(() => {
     const unsub = AdminSessionService.onSessionExpired((msg) => {
+      // Invalidate any in-flight verifications on session expiration
+      verificationGenRef.current += 1;
+      activeUserUidRef.current = null;
       setErrorMsg(msg);
       setAuthStatus('unauthenticated');
       onLogoutRef.current();
@@ -74,23 +103,40 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
     return () => unsub();
   }, []);
 
-  // Monitor Firebase Auth state with verified claim requirement before mounting
-  const isVerifyingRef = useRef(false);
-
+  // Monitor Firebase Auth state with generational race cancellation
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user && user.email) {
         setFirebaseUserEmail(user.email);
+
         if (AdminSessionService.isLocked() || isLockedRef.current) {
+          verificationGenRef.current += 1;
+          activeUserUidRef.current = user.uid;
           setAuthStatus('unauthenticated');
           return;
         }
-        if (isVerifyingRef.current) return;
-        isVerifyingRef.current = true;
+
+        // Avoid unnecessary repeated verification if already verified for this exact user and session is valid
+        const existingSession = AdminSessionService.getSession();
+        if (
+          authStatus === 'verified' &&
+          existingSession &&
+          AdminSessionService.isSessionValid() &&
+          existingSession.user.email === user.email &&
+          activeUserUidRef.current === user.uid
+        ) {
+          return;
+        }
+
+        // Begin a new verification generation for this user
+        const gen = ++verificationGenRef.current;
+        activeUserUidRef.current = user.uid;
         setAuthStatus('verifying');
 
         try {
           const idToken = await user.getIdToken();
+          if (!isAttemptActive(gen, user.uid)) return;
+
           const res = await fetch('/api/admin/verify-or-claim', {
             method: 'POST',
             headers: {
@@ -98,12 +144,17 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
               Authorization: `Bearer ${idToken}`,
             },
           });
+          if (!isAttemptActive(gen, user.uid)) return;
 
           if (res.ok) {
             const data = await res.json();
+            if (!isAttemptActive(gen, user.uid)) return;
+
             if (data.isAdmin && data.hasClaim) {
               // Verify actual refreshed token claims via getIdTokenResult(true)
               const tokenResult = await user.getIdTokenResult(true);
+              if (!isAttemptActive(gen, user.uid)) return;
+
               if (tokenResult.claims.admin === true) {
                 const baseAdmin = StorageService.getAdminUser() || INITIAL_ADMIN_USER;
                 const adminData: AdminUser = {
@@ -112,6 +163,10 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
                   name: user.displayName || baseAdmin.name || 'Administrator',
                   lastLogin: new Date().toISOString(),
                 };
+
+                // Commit authorization strictly if this attempt is still latest and active
+                if (!isAttemptActive(gen, user.uid)) return;
+
                 AdminSessionService.saveSession({
                   token: tokenResult.token,
                   expiresAt: Date.now() + 3600 * 1000,
@@ -121,46 +176,52 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
                 setAuthStatus('verified');
                 setErrorMsg(null);
               } else {
+                if (!isAttemptActive(gen, user.uid)) return;
                 AdminSessionService.clearSession();
                 onLogoutRef.current();
                 setAuthStatus('denied');
                 setErrorMsg('Account token does not contain verified admin claim (admin: true). Access denied.');
               }
             } else {
+              if (!isAttemptActive(gen, user.uid)) return;
               AdminSessionService.clearSession();
               onLogoutRef.current();
               setAuthStatus('denied');
               setErrorMsg(data.message || data.error || 'Account does not possess verified admin privileges.');
             }
           } else {
+            if (!isAttemptActive(gen, user.uid)) return;
             const errData = await res.json().catch(() => ({}));
+            if (!isAttemptActive(gen, user.uid)) return;
             AdminSessionService.clearSession();
             onLogoutRef.current();
             setAuthStatus('denied');
             setErrorMsg(errData.message || errData.error || 'Server denied administrative authorization.');
           }
         } catch (err: any) {
+          if (!isAttemptActive(gen, user.uid)) return;
           console.warn('[AuthGate] Re-verification notice:', err?.message);
           AdminSessionService.clearSession();
           onLogoutRef.current();
           setAuthStatus('denied');
           setErrorMsg(err?.message || 'Verification of administrative credentials failed.');
-        } finally {
-          isVerifyingRef.current = false;
         }
       } else {
+        // Firebase user is null: invalidate pending verifications immediately
+        verificationGenRef.current += 1;
+        activeUserUidRef.current = null;
         setFirebaseUserEmail(null);
-        // User is not signed in to Firebase: clear any unverified or stale sessions
+
+        // Clear any unverified or stale sessions
         if (AdminSessionService.getSession() || currentUserRef.current) {
           AdminSessionService.clearSession();
           onLogoutRef.current();
         }
         setAuthStatus('unauthenticated');
-        isVerifyingRef.current = false;
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [authStatus]);
 
   // Session validation. Active admin session must be present, non-expired, and match authorized admin user.
   const activeSession = AdminSessionService.getSession();
@@ -177,15 +238,24 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
     return <>{children}</>;
   }
 
-  // Handle Google Sign-In with Firebase Authentication
+  // Handle Google Sign-In with Firebase Authentication and generational race cancellation
   const handleGoogleSignIn = async () => {
     setIsGoogleSigningIn(true);
     setErrorMsg(null);
     setSuccessInfoMsg(null);
+
+    // Invalidate any ongoing onAuthStateChanged attempts
+    const gen = ++verificationGenRef.current;
+
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
+      activeUserUidRef.current = user.uid;
+
+      if (!isMountedRef.current || gen !== verificationGenRef.current) return;
+
       const initialToken = await user.getIdToken();
+      if (!isAttemptActive(gen, user.uid)) return;
 
       // Verify token on server and ensure admin custom claim
       const verifyRes = await fetch('/api/admin/verify-or-claim', {
@@ -195,33 +265,47 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
           Authorization: `Bearer ${initialToken}`,
         },
       });
+      if (!isAttemptActive(gen, user.uid)) return;
 
       if (!verifyRes.ok) {
         const errData = await verifyRes.json().catch(() => ({}));
-        await signOut(auth);
-        AdminSessionService.clearSession();
-        onLogoutRef.current();
-        setAuthStatus('denied');
-        throw new Error(errData.message || errData.error || 'Server denied administrative authorization.');
+        if (isAttemptActive(gen, user.uid)) {
+          await signOut(auth);
+          AdminSessionService.clearSession();
+          onLogoutRef.current();
+          setAuthStatus('denied');
+          throw new Error(errData.message || errData.error || 'Server denied administrative authorization.');
+        }
+        return;
       }
 
       const verifyData = await verifyRes.json();
+      if (!isAttemptActive(gen, user.uid)) return;
+
       if (!verifyData.isAdmin || !verifyData.hasClaim) {
-        await signOut(auth);
-        AdminSessionService.clearSession();
-        onLogoutRef.current();
-        setAuthStatus('denied');
-        throw new Error(verifyData.message || verifyData.error || 'Account does not possess verified admin privileges.');
+        if (isAttemptActive(gen, user.uid)) {
+          await signOut(auth);
+          AdminSessionService.clearSession();
+          onLogoutRef.current();
+          setAuthStatus('denied');
+          throw new Error(verifyData.message || verifyData.error || 'Account does not possess verified admin privileges.');
+        }
+        return;
       }
 
       // Verify that claims.admin is true on refreshed token
       const tokenResult = await user.getIdTokenResult(true);
+      if (!isAttemptActive(gen, user.uid)) return;
+
       if (tokenResult.claims.admin !== true) {
-        await signOut(auth);
-        AdminSessionService.clearSession();
-        onLogoutRef.current();
-        setAuthStatus('denied');
-        throw new Error('Administrative privileges require a verified admin: true claim. Refreshed token claim verification failed.');
+        if (isAttemptActive(gen, user.uid)) {
+          await signOut(auth);
+          AdminSessionService.clearSession();
+          onLogoutRef.current();
+          setAuthStatus('denied');
+          throw new Error('Administrative privileges require a verified admin: true claim. Refreshed token claim verification failed.');
+        }
+        return;
       }
       const refreshedToken = tokenResult.token;
 
@@ -232,7 +316,9 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
         name: user.displayName || baseAdmin.name || 'Administrator',
         lastLogin: new Date().toISOString(),
       };
-      
+
+      if (!isAttemptActive(gen, user.uid)) return;
+
       // Save session with fresh Firebase Auth ID Token containing verified admin claim
       AdminSessionService.saveSession({
         token: refreshedToken,
@@ -255,15 +341,22 @@ export const AdminAuthGate: React.FC<AdminAuthGateProps> = ({
       setAuthStatus('verified');
       onAuthenticated(adminData);
     } catch (err: any) {
-      console.warn('[Auth] Google Sign-In error:', err?.message);
-      setErrorMsg(err?.message || 'Failed to authenticate via Google Firebase Auth.');
-      setAuthStatus('denied');
+      if (isMountedRef.current && gen === verificationGenRef.current) {
+        console.warn('[Auth] Google Sign-In error:', err?.message);
+        setErrorMsg(err?.message || 'Failed to authenticate via Google Firebase Auth.');
+        setAuthStatus('denied');
+      }
     } finally {
-      setIsGoogleSigningIn(false);
+      if (isMountedRef.current && gen === verificationGenRef.current) {
+        setIsGoogleSigningIn(false);
+      }
     }
   };
 
   const handleManualLogout = () => {
+    // Invalidate any pending or in-flight verification attempts
+    verificationGenRef.current += 1;
+    activeUserUidRef.current = null;
     setAuthStatus('unauthenticated');
     setErrorMsg(null);
     onLogout();
