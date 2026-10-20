@@ -149,6 +149,8 @@ export const AdMobModule: React.FC = () => {
         'interstitialAdUnitId',
         'isPostSaveAdEnabled',
         'postSavePopupAdUnitId',
+        'isRewardedAdEnabled',
+        'rewardedAdUnitId',
       ];
 
       for (const key of keysToCheck) {

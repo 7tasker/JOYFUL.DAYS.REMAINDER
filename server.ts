@@ -698,8 +698,12 @@ async function syncAdMobStateFromFirestore(force = false): Promise<void> {
     if (typeof persisted.adsEnabled === "boolean") admobSettingsState.adsEnabled = persisted.adsEnabled;
     if (typeof persisted.bannerEnabled === "boolean") admobSettingsState.bannerEnabled = persisted.bannerEnabled;
     if (typeof persisted.interstitialEnabled === "boolean") admobSettingsState.interstitialEnabled = persisted.interstitialEnabled;
+    if (typeof persisted.isPostSaveAdEnabled === "boolean") admobSettingsState.isPostSaveAdEnabled = persisted.isPostSaveAdEnabled;
+    if (typeof persisted.isRewardedAdEnabled === "boolean") admobSettingsState.isRewardedAdEnabled = persisted.isRewardedAdEnabled;
     if (typeof persisted.bannerAdUnitId === "string") admobSettingsState.bannerAdUnitId = persisted.bannerAdUnitId;
     if (typeof persisted.interstitialAdUnitId === "string") admobSettingsState.interstitialAdUnitId = persisted.interstitialAdUnitId;
+    if (typeof persisted.postSavePopupAdUnitId === "string") admobSettingsState.postSavePopupAdUnitId = persisted.postSavePopupAdUnitId;
+    if (typeof persisted.rewardedAdUnitId === "string") admobSettingsState.rewardedAdUnitId = persisted.rewardedAdUnitId;
     if (persisted.bannerPlacement === "BOTTOM" || persisted.bannerPlacement === "TOP") admobSettingsState.bannerPlacement = persisted.bannerPlacement;
     if (persisted.interstitialTrigger) admobSettingsState.interstitialTrigger = persisted.interstitialTrigger;
     if (typeof persisted.interstitialFrequency === "number") admobSettingsState.interstitialFrequency = persisted.interstitialFrequency;
