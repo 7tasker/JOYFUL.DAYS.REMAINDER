@@ -659,6 +659,7 @@ class FirestoreSyncService {
   // Subscribe to live users across all Firestore collections with 3-way merging (users, preferences, analytics)
   subscribeUsers(onUpdate: (users: CanonicalUserDashboardRecord[]) => void): () => void {
     const unsubscribers: (() => void)[] = [];
+    const userPrefUnsubMap = new Map<string, () => void>();
     const rawUsersMap = new Map<string, any>();
     const userPrefsMap = new Map<string, any>();
     const analyticsUsersMap = new Map<string, any>();
@@ -699,21 +700,60 @@ class FirestoreSyncService {
     ];
 
     dbInstances.forEach(({ name: dbName, instance }) => {
-      // 1. Root users collection listener
+      // 1. Root users collection listener with per-user settings/preferences document listeners
       try {
         const usersCol = collection(instance, 'users');
         const unsub = onSnapshot(
           usersCol,
           (snapshot) => {
             snapshot.docs.forEach((docSnap) => {
+              const uid = docSnap.id;
               const data = docSnap.data();
-              rawUsersMap.set(docSnap.id, data);
-              recomputeUser(docSnap.id);
+              rawUsersMap.set(uid, data);
+
+              // Authorized document listener targeting users/{uid}/settings/preferences
+              const listenerKey = `${dbName}:${uid}`;
+              if (!userPrefUnsubMap.has(listenerKey)) {
+                try {
+                  const prefDocRef = doc(instance, 'users', uid, 'settings', 'preferences');
+                  const prefUnsub = onSnapshot(
+                    prefDocRef,
+                    (prefSnap) => {
+                      if (prefSnap.exists()) {
+                        userPrefsMap.set(uid, prefSnap.data());
+                      } else {
+                        userPrefsMap.delete(uid);
+                      }
+                      recomputeUser(uid);
+                      emitMergedUsers();
+                    },
+                    (error) => {
+                      console.info(`[Firestore] User preferences listener notice for ${uid} on ${dbName}:`, error.message);
+                    }
+                  );
+                  userPrefUnsubMap.set(listenerKey, prefUnsub);
+                } catch (prefErr) {
+                  console.info(`[Firestore] User preferences listener setup error for ${uid} on ${dbName}:`, prefErr);
+                }
+              }
+
+              recomputeUser(uid);
             });
+
             snapshot.docChanges().forEach((change) => {
               if (change.type === 'removed') {
-                rawUsersMap.delete(change.doc.id);
-                recomputeUser(change.doc.id);
+                const uid = change.doc.id;
+                const listenerKey = `${dbName}:${uid}`;
+                const prefUnsub = userPrefUnsubMap.get(listenerKey);
+                if (prefUnsub) {
+                  try {
+                    prefUnsub();
+                  } catch {}
+                  userPrefUnsubMap.delete(listenerKey);
+                }
+                rawUsersMap.delete(uid);
+                userPrefsMap.delete(uid);
+                recomputeUser(uid);
               }
             });
             emitMergedUsers();
@@ -727,43 +767,7 @@ class FirestoreSyncService {
         console.info(`[Firestore] Users listener setup on ${dbName}:`, err);
       }
 
-      // 2. Preferences subcollection group listener: users/{uid}/settings/preferences
-      try {
-        const prefGroupRef = collectionGroup(instance, 'preferences');
-        const unsub = onSnapshot(
-          prefGroupRef,
-          (snapshot) => {
-            snapshot.docs.forEach((docSnap) => {
-              const data = docSnap.data();
-              const pathParts = docSnap.ref.path.split('/');
-              if (pathParts.length >= 3 && pathParts[0] === 'users') {
-                const uid = pathParts[1];
-                userPrefsMap.set(uid, data);
-                recomputeUser(uid);
-              }
-            });
-            snapshot.docChanges().forEach((change) => {
-              if (change.type === 'removed') {
-                const pathParts = change.doc.ref.path.split('/');
-                if (pathParts.length >= 3 && pathParts[0] === 'users') {
-                  const uid = pathParts[1];
-                  userPrefsMap.delete(uid);
-                  recomputeUser(uid);
-                }
-              }
-            });
-            emitMergedUsers();
-          },
-          (error) => {
-            console.info(`[Firestore] User preferences group listener info on ${dbName}:`, error.message);
-          }
-        );
-        unsubscribers.push(unsub);
-      } catch (err) {
-        console.info(`[Firestore] User preferences group listener setup on ${dbName}:`, err);
-      }
-
-      // 3. Analytics users listener: analytics/monetization_stats/users
+      // 2. Analytics users listener: analytics/monetization_stats/users
       try {
         const analyticsCol = collection(instance, 'analytics/monetization_stats/users');
         const unsub = onSnapshot(
@@ -795,6 +799,12 @@ class FirestoreSyncService {
     });
 
     return () => {
+      userPrefUnsubMap.forEach((u) => {
+        try {
+          u();
+        } catch {}
+      });
+      userPrefUnsubMap.clear();
       unsubscribers.forEach((u) => {
         try {
           u();

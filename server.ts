@@ -2618,15 +2618,47 @@ app.get("/api/analytics/summary", requireAdminAuth, async (req, res) => {
     let prefsDocs: Array<{ id: string; path: string; data: any }> = [];
     if (rawToken && dotCount === 2) {
       try {
-        prefsDocs = await runAuthenticatedFirestoreRestQuery(rawToken, "preferences", true);
+        const userDocs = await runAuthenticatedFirestoreRestQuery(rawToken, "users", false);
+        const baseUrl = `https://firestore.googleapis.com/v1/projects/joyful-days/databases/ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1/documents`;
+
+        const prefPromises = userDocs.map(async (uDoc) => {
+          const uid = uDoc.id || uDoc.path.split("/").pop();
+          if (!uid) return null;
+
+          const targetDocPath = `projects/joyful-days/databases/ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1/documents/users/${uid}/settings/preferences`;
+          try {
+            const prefDocUrl = `${baseUrl}/users/${encodeURIComponent(uid)}/settings/preferences?key=${FIREBASE_API_KEY}`;
+            const prefRes = await fetch(prefDocUrl, {
+              headers: { Authorization: `Bearer ${rawToken}` },
+            });
+            if (prefRes.ok) {
+              const jsonDoc = await prefRes.json();
+              if (jsonDoc && jsonDoc.fields) {
+                const parsedData: Record<string, any> = {};
+                Object.keys(jsonDoc.fields).forEach((k) => {
+                  parsedData[k] = decodeFirestoreRestValue(jsonDoc.fields[k]);
+                });
+                return {
+                  id: "preferences",
+                  path: targetDocPath,
+                  data: parsedData,
+                };
+              }
+            }
+          } catch {
+            // Individual document read notice
+          }
+          return null;
+        });
+
+        const fetched = await Promise.all(prefPromises);
+        prefsDocs = fetched.filter((doc): doc is { id: string; path: string; data: any } => doc !== null);
       } catch (err: any) {
-        console.error("[Analytics Summary] Preferences REST Query failed:", err?.message || err);
+        console.error("[Analytics Summary] User preferences retrieval failed:", err?.message || err);
         const errStatus = (err as any)?.status || (err as any)?.statusCode || 502;
         const isPermissionDenied = errStatus === 403 || (err?.message && err.message.includes("403"));
         const isUnauthorized = errStatus === 401 || (err?.message && err.message.includes("401"));
 
-        // Fix 5: Never silently replace query failure with zero records.
-        // Return an explicit API error with appropriate HTTP status without leaking internal tokens or keys.
         return res.status(isPermissionDenied ? 403 : isUnauthorized ? 401 : 502).json({
           success: false,
           error: isPermissionDenied
@@ -2635,32 +2667,29 @@ app.get("/api/analytics/summary", requireAdminAuth, async (req, res) => {
             ? "FIRESTORE_UNAUTHORIZED"
             : "FIRESTORE_QUERY_FAILED",
           message: isPermissionDenied
-            ? "Access to user preferences collection group denied by Firestore security rules. Verified administrator claim required."
+            ? "Access to user preferences denied by Firestore security rules. Verified administrator claim required."
             : "Failed to query preferences records from Firestore.",
         });
       }
     }
 
     for (const prefDoc of prefsDocs) {
-      const path = prefDoc.path;
-      if (path.includes("/settings/preferences")) {
-        const pData = prefDoc.data || {};
-        const watched = Number(pData.advancedFeaturesRewardAdsWatched || 0);
-        const unlocked = Boolean(pData.advancedFeaturesUnlocked);
+      const pData = prefDoc.data || {};
+      const watched = Number(pData.advancedFeaturesRewardAdsWatched || pData.rewardAdsWatched || 0);
+      const unlocked = Boolean(pData.advancedFeaturesUnlocked);
 
-        if (watched >= 1) {
-          usersStartedUnlock++;
-          usersCompleted1Ad++;
-        }
-        if (watched >= 2) {
-          usersCompleted2Ads++;
-        }
-        if (watched >= 3) {
-          usersCompleted3Ads++;
-        }
-        if (unlocked) {
-          totalAdvancedFeaturesUnlocked++;
-        }
+      if (watched >= 1) {
+        usersStartedUnlock++;
+        usersCompleted1Ad++;
+      }
+      if (watched >= 2) {
+        usersCompleted2Ads++;
+      }
+      if (watched >= 3) {
+        usersCompleted3Ads++;
+      }
+      if (unlocked) {
+        totalAdvancedFeaturesUnlocked++;
       }
     }
 
