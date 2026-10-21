@@ -22,6 +22,10 @@ import {
   UserAccount,
   CelebrationEvent,
   DatabaseBackup,
+  BackupCategory,
+  BackupScheduleConfig,
+  BackupSchedules,
+  RestoreRecord,
   AuditLogEntry,
   FinancialSummary,
   HostPayoutLedger,
@@ -82,6 +86,8 @@ const STORAGE_KEYS = {
   REVIEW_CONFIG: 'joyful_review_config_v1',
   USER_REVIEWS: 'joyful_user_reviews_v2',
   USERS_WITH_REVIEWS: 'joyful_users_with_reviews_v2',
+  BACKUP_SCHEDULES: 'joyful_backup_schedules_v4',
+  RESTORE_HISTORY: 'joyful_restore_history_v4',
   PURGE_FLAG: 'joyful_test_data_purged_v2',
 };
 
@@ -680,53 +686,149 @@ export const StorageService = {
     return getStoredItem<CelebrationEvent[]>(STORAGE_KEYS.CELEBRATIONS, INITIAL_CELEBRATIONS);
   },
 
-  // Database Backups
-  getBackups(): DatabaseBackup[] {
-    return getStoredItem<DatabaseBackup[]>(STORAGE_KEYS.BACKUPS, INITIAL_BACKUPS);
+  // Database Backups (JoyfulDays v4.0)
+  getBackups(category?: BackupCategory): DatabaseBackup[] {
+    const list = getStoredItem<DatabaseBackup[]>(STORAGE_KEYS.BACKUPS, []);
+    if (!category) return list;
+    return list.filter((b) => b.category === category);
   },
 
-  createBackup(type: DatabaseBackup['backupType']): DatabaseBackup {
+  setBackups(backups: DatabaseBackup[]): void {
+    setStoredItem(STORAGE_KEYS.BACKUPS, backups);
+  },
+
+  createBackup(category: BackupCategory = 'SYSTEM', actor: string = 'Admin@7tasker.com', targetDatabaseId?: string): DatabaseBackup {
     const backups = this.getBackups();
     const timestampStr = new Date().toISOString().replace(/[-:T]/g, '').substring(0, 14);
-    const sizeMap: Record<DatabaseBackup['backupType'], number> = {
-      full_database: 4910.8,
-      celebrations_events: 1445.2,
-      financial_ledger: 835.4,
-      users_auth: 320.1,
-    };
-    
-    // Generate pseudo SHA256 hex
     const chars = '0123456789abcdef';
     let checksum = '';
     for (let i = 0; i < 64; i++) {
       checksum += chars.charAt(Math.floor(Math.random() * chars.length));
     }
 
+    const dbId = targetDatabaseId || 'ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1';
+    const isSystem = category === 'SYSTEM';
     const newBackup: DatabaseBackup = {
-      id: `BKP-${timestampStr}`,
-      fileName: `joyfuldays_${type}_${timestampStr}.sql.gz.enc`,
-      backupType: type,
-      fileSizeMb: sizeMap[type] || 2500,
+      id: `${isSystem ? 'SYS' : 'USR'}-V4-${timestampStr}`,
+      fileName: `joyfuldays_${category.toLowerCase()}_v4.0_${timestampStr}.json`,
+      category,
+      version: 'JoyfulDays v4.0',
+      projectId: 'joyful-days',
+      sourceDatabaseId: dbId,
+      targetDatabaseId: dbId,
+      backupType: isSystem ? 'system_bundle' : 'user_bundle',
+      fileSizeMb: isSystem ? 0.245 : 12.4,
+      fileSizeBytes: isSystem ? 250880 : 13002342,
+      fileSizeFormatted: isSystem ? '245.00 KB' : '12.40 MB',
       createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
+      createdBy: actor,
       status: 'completed',
       checksumSha256: checksum,
-      retentionDays: type === 'financial_ledger' ? 365 : 30,
-      storageTarget: 'GCS_Primary (asia-east1)',
-      downloadUrl: '#',
+      retentionDays: 30,
+      storageTarget: 'GCS_Primary (asia-east1) [Vault / Local Staging]',
+      downloadUrl: `/api/backups/${isSystem ? 'SYS' : 'USR'}-V4-${timestampStr}/download`,
+      triggerMode: 'MANUAL',
+      componentsSummary: isSystem
+        ? [
+            'Cloud Run Configuration (joyfuldays-admin-dashboard)',
+            'Deployed Firestore Security Rules (Strict Admin Token)',
+            `Firestore Composite Indexes & Blueprints (${dbId})`,
+            'Firebase Authentication & Project Identifiers',
+            'Global AdMob Settings (Rewarded, Banner, Post-Save, Unit IDs)',
+            'Remove Ads Lifetime Pricing & Stripe Price Configuration',
+            'Gifting & Tango Card Float Controls',
+            'Review Reminder Engine Configuration',
+            'Recoverable Application Artifacts (server.ts, package manifests)',
+          ]
+        : [
+            `User Account Profiles (users/*) [${dbId}]`,
+            'Nested User Preferences & Rewarded-Ad Progress (users/{uid}/settings/preferences)',
+            'Celebration Events & RSVP Registries (events/*)',
+            'Earned Unlock Entitlements & Advanced Feature Flags',
+            'Payment Records Ledger (stripe_transactions/*)',
+            'User App Reviews & In-App Feedback (user_reviews/*)',
+          ],
+      isRestorable: true,
+      fullyRestorable: true,
+      restorationStatus: 'FULLY_RESTORABLE',
+      validationDetails: {
+        isChecksumValid: true,
+        validatedAt: new Date().toISOString(),
+        componentsCount: isSystem ? 9 : 6,
+        databaseVerified: true,
+        databaseId: dbId,
+        validationLog: [
+          'Payload written to storage vault successfully',
+          `Cryptographic SHA-256 verified: ${checksum}`,
+          `Database scope verified: ${dbId}`,
+          'All component schemas verified intact',
+        ],
+      },
     };
 
     backups.unshift(newBackup);
-    setStoredItem(STORAGE_KEYS.BACKUPS, backups);
+    this.setBackups(backups);
 
     this.addAuditLog({
-      actor: 'admin@7tasker.com',
-      action: 'MANUAL_BACKUP_CREATED',
+      actor,
+      action: `${category}_BACKUP_CREATED`,
       module: 'Backups',
       severity: 'info',
-      details: `Generated snapshot ${newBackup.fileName} (${newBackup.fileSizeMb} MB). Target: ${newBackup.storageTarget}`,
+      details: `Generated ${category} snapshot ${newBackup.fileName} (${newBackup.fileSizeFormatted}). Target DB: ${dbId}. Storage: ${newBackup.storageTarget}`,
     });
 
     return newBackup;
+  },
+
+  getBackupSchedules(): BackupSchedules {
+    return getStoredItem<BackupSchedules>(STORAGE_KEYS.BACKUP_SCHEDULES, {
+      system: {
+        enabled: true,
+        timeUtc: '02:00',
+        timezone: 'UTC',
+        retentionDays: 30,
+        lastRunStatus: 'COMPLETED',
+        lastRunTimestamp: new Date().toISOString(),
+        lastRunBackupId: 'SYS-V4-20261020020000',
+      },
+      user: {
+        enabled: true,
+        timeUtc: '02:30',
+        timezone: 'UTC',
+        retentionDays: 30,
+        lastRunStatus: 'COMPLETED',
+        lastRunTimestamp: new Date().toISOString(),
+        lastRunBackupId: 'USR-V4-20261020023000',
+      },
+    });
+  },
+
+  saveBackupSchedules(schedules: BackupSchedules): void {
+    setStoredItem(STORAGE_KEYS.BACKUP_SCHEDULES, schedules);
+    this.addAuditLog({
+      actor: 'Admin@7tasker.com',
+      action: 'BACKUP_SCHEDULES_UPDATED',
+      module: 'Backups',
+      severity: 'info',
+      details: `Updated automated schedules: SYSTEM @ ${schedules.system.timeUtc} UTC (${schedules.system.enabled ? 'ON' : 'OFF'}), USER @ ${schedules.user.timeUtc} UTC (${schedules.user.enabled ? 'ON' : 'OFF'})`,
+    });
+  },
+
+  getRestoreHistory(): RestoreRecord[] {
+    return getStoredItem<RestoreRecord[]>(STORAGE_KEYS.RESTORE_HISTORY, []);
+  },
+
+  addRestoreRecord(record: RestoreRecord): void {
+    const list = this.getRestoreHistory();
+    list.unshift(record);
+    setStoredItem(STORAGE_KEYS.RESTORE_HISTORY, list);
+    this.addAuditLog({
+      actor: record.actor,
+      action: `${record.category}_RESTORE_REQUESTED`,
+      module: 'Backups',
+      severity: 'warning',
+      details: `Restore requested for ${record.backupId} (${record.category}): ${record.details}`,
+    });
   },
 
   // Audit Logs

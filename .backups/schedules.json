@@ -1,0 +1,20 @@
+{
+  "system": {
+    "enabled": true,
+    "timeUtc": "03:00",
+    "timezone": "UTC",
+    "retentionDays": 90,
+    "lastRunStatus": "COMPLETED",
+    "lastRunTimestamp": "2026-10-20T20:26:33.318Z",
+    "lastRunBackupId": ""
+  },
+  "user": {
+    "enabled": true,
+    "timeUtc": "03:30",
+    "timezone": "UTC",
+    "retentionDays": 30,
+    "lastRunStatus": "COMPLETED",
+    "lastRunTimestamp": "2026-10-20T20:26:33.319Z",
+    "lastRunBackupId": ""
+  }
+}

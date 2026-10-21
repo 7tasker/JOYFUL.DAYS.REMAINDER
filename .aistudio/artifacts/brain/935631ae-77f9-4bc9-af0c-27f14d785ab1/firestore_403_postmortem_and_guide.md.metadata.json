@@ -1,0 +1,5 @@
+{
+  "summary":  "Engineering postmortem, diagnostic breakdown, and reusable architecture pattern for resolving Firestore REST 403 PERMISSION_DENIED errors across JoyfulDays backend modules. Documents root causes, security rules boundary, admin token propagation, exact named database targeting, and verification procedures.",
+  "updatedAt":  "2026-10-21T12:09:22.500604606Z",
+  "userFacing":  true
+}

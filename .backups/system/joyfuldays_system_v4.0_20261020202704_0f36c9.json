@@ -1,0 +1,148 @@
+{
+  "backupCategory": "SYSTEM",
+  "version": "JoyfulDays v4.0",
+  "exportTimestamp": "2026-10-20T20:27:04.283Z",
+  "classification": "CONFIDENTIAL_SYSTEM_RECOVERY_BASELINE",
+  "targetDatabase": "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1",
+  "targetProject": "joyful-days",
+  "cloudRun": {
+    "service": "joyfuldays-admin-dashboard",
+    "runtimeServiceAccount": "joyfuldays-admin-dashboard@joyful-days.iam.gserviceaccount.com",
+    "containerImageDigest": "gcr.io/joyful-days/joyfuldays-admin-dashboard:v4.0.0@sha256:d84f932be78394a10294c",
+    "activeRevision": "joyfuldays-admin-dashboard-v4-prod",
+    "environmentVariables": [
+      "NODE_ENV",
+      "PORT",
+      "FIREBASE_API_KEY",
+      "ADMIN_SESSION_SECRET",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET"
+    ],
+    "secretManagerReferences": [
+      "projects/joyful-days/secrets/STRIPE_SECRET_KEY/versions/latest",
+      "projects/joyful-days/secrets/STRIPE_WEBHOOK_SECRET/versions/latest",
+      "projects/joyful-days/secrets/ADMIN_SESSION_SECRET/versions/latest"
+    ],
+    "resources": {
+      "cpu": "1",
+      "memory": "512Mi",
+      "concurrency": 80,
+      "minInstances": 0,
+      "maxInstances": 10
+    }
+  },
+  "securityRules": {
+    "file": "firestore.rules",
+    "sha256": "76fb0d8d6fdc09451c61c7021da07c9eb9c4856ac84510dcc7a1b8804fa517ee",
+    "adminTokenEnforced": true,
+    "content": "rules_version = '2';\nservice cloud.firestore {\n  match /databases/{database}/documents {\n\n    // =========================================================================\n    // HELPER FUNCTIONS\n    // =========================================================================\n\n    // Verify if requesting client is authenticated\n    function isAuthenticated() {\n      return request.auth != null;\n    }\n\n    // Verify if requesting client matches the target user ID\n    function isOwner(userId) {\n      return isAuthenticated() && request.auth.uid == userId;\n    }\n\n    // Verify admin role strictly via server-assigned cryptographic custom claim.\n    // NO EMAIL FALLBACKS PERMITTED.\n    function isAdmin() {\n      return isAuthenticated() && request.auth.token.admin == true;\n    }\n\n    // Checks if the authenticated user matches ALL present owner/creator identifiers on an event document.\n    // If conflicting UIDs exist across present owner fields, access is DENIED to prevent ambiguity.\n    function isEventOwner(data) {\n      return isAuthenticated() &&\n        hasAnyOwnerField(data) &&\n        (!('createdBy' in data) || data.createdBy == request.auth.uid) &&\n        (!('hostUid' in data) || data.hostUid == request.auth.uid) &&\n        (!('userId' in data) || data.userId == request.auth.uid) &&\n        (!('ownerUid' in data) || data.ownerUid == request.auth.uid) &&\n        (!('creatorUid' in data) || data.creatorUid == request.auth.uid) &&\n        (!('user_id' in data) || data.user_id == request.auth.uid) &&\n        (!('host_id' in data) || data.host_id == request.auth.uid);\n    }\n\n    // Validates that if any owner identifier is provided on event creation, it MUST match request.auth.uid.\n    // At least one owner field must be specified.\n    function isValidNewEventOwnership() {\n      return isAuthenticated() &&\n        hasAnyOwnerField(request.resource.data) &&\n        (!('createdBy' in request.resource.data) || request.resource.data.createdBy == request.auth.uid) &&\n        (!('hostUid' in request.resource.data) || request.resource.data.hostUid == request.auth.uid) &&\n        (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&\n        (!('ownerUid' in request.resource.data) || request.resource.data.ownerUid == request.auth.uid) &&\n        (!('creatorUid' in request.resource.data) || request.resource.data.creatorUid == request.auth.uid) &&\n        (!('user_id' in request.resource.data) || request.resource.data.user_id == request.auth.uid) &&\n        (!('host_id' in request.resource.data) || request.resource.data.host_id == request.auth.uid);\n    }\n\n    // Checks whether an event document has ANY owner identifier field present\n    function hasAnyOwnerField(data) {\n      return ('createdBy' in data) ||\n        ('hostUid' in data) ||\n        ('userId' in data) ||\n        ('ownerUid' in data) ||\n        ('creatorUid' in data) ||\n        ('user_id' in data) ||\n        ('host_id' in data);\n    }\n\n    // Comprehensive list of server-controlled entitlement, payment, and privilege keys\n    function isProtectedKey(key) {\n      return key in [\n        'isPro',\n        'proStatus',\n        'removeAdsLifetime',\n        'remove_ads_lifetime',\n        'entitlements',\n        'isAdsRemoved',\n        'removeAdsProvider',\n        'removeAdsStripeSessionId',\n        'transactionId',\n        'paymentIntentId',\n        'amountPaid',\n        'currency',\n        'purchasedAt',\n        'stripeCustomerId',\n        'role',\n        'purchases',\n        'subscriptionStatus',\n        'adsRemovedAt',\n        'paymentHistory'\n      ];\n    }\n\n    // Ensures no protected entitlement/payment field is added during document creation\n    function hasNoProtectedFieldsOnCreate() {\n      let keys = request.resource.data.keys();\n      return !keys.hasAny([\n        'isPro',\n        'proStatus',\n        'removeAdsLifetime',\n        'remove_ads_lifetime',\n        'entitlements',\n        'isAdsRemoved',\n        'removeAdsProvider',\n        'removeAdsStripeSessionId',\n        'transactionId',\n        'paymentIntentId',\n        'amountPaid',\n        'currency',\n        'purchasedAt',\n        'stripeCustomerId',\n        'role',\n        'purchases',\n        'subscriptionStatus',\n        'adsRemovedAt',\n        'paymentHistory'\n      ]);\n    }\n\n    // Verifies that any protected field included during initial client profile creation contains ONLY unprivileged default values\n    function isUnprivilegedCreate() {\n      let data = request.resource.data;\n      return (!('isPro' in data) || data.isPro == false) &&\n             (!('proStatus' in data) || data.proStatus == 'FREE' || data.proStatus == 'INACTIVE' || data.proStatus == 'NONE') &&\n             (!('removeAdsLifetime' in data) || data.removeAdsLifetime == false) &&\n             (!('remove_ads_lifetime' in data) || data.remove_ads_lifetime == false) &&\n             (!('isAdsRemoved' in data) || data.isAdsRemoved == false) &&\n             (!('role' in data) || data.role == 'user' || data.role == 'customer') &&\n             (!('removeAdsProvider' in data) || data.removeAdsProvider == null || data.removeAdsProvider == '') &&\n             (!('removeAdsStripeSessionId' in data) || data.removeAdsStripeSessionId == null || data.removeAdsStripeSessionId == '') &&\n             (!('transactionId' in data) || data.transactionId == null || data.transactionId == '') &&\n             (!('paymentIntentId' in data) || data.paymentIntentId == null || data.paymentIntentId == '') &&\n             (!('amountPaid' in data) || data.amountPaid == 0) &&\n             (!('currency' in data) || data.currency == 'USD') &&\n             (!('purchasedAt' in data) || data.purchasedAt == null || data.purchasedAt == '') &&\n             (!('stripeCustomerId' in data) || data.stripeCustomerId == null || data.stripeCustomerId == '') &&\n             (!('subscriptionStatus' in data) || data.subscriptionStatus == 'inactive' || data.subscriptionStatus == 'none' || data.subscriptionStatus == 'free') &&\n             (!('adsRemovedAt' in data) || data.adsRemovedAt == null || data.adsRemovedAt == '') &&\n             (!('entitlements' in data) || data.entitlements == {} || data.entitlements.size() == 0) &&\n             (!('purchases' in data) || data.purchases == [] || data.purchases.size() == 0) &&\n             (!('paymentHistory' in data) || data.paymentHistory == [] || data.paymentHistory.size() == 0);\n    }\n\n    // Ensures no protected entitlement/payment field is altered during document update\n    function protectedFieldsUnchanged() {\n      let affectedKeys = request.resource.data.diff(resource.data).affectedKeys();\n      return !affectedKeys.hasAny([\n        'isPro',\n        'proStatus',\n        'removeAdsLifetime',\n        'remove_ads_lifetime',\n        'entitlements',\n        'isAdsRemoved',\n        'removeAdsProvider',\n        'removeAdsStripeSessionId',\n        'transactionId',\n        'paymentIntentId',\n        'amountPaid',\n        'currency',\n        'purchasedAt',\n        'stripeCustomerId',\n        'role',\n        'purchases',\n        'subscriptionStatus',\n        'adsRemovedAt',\n        'paymentHistory'\n      ]);\n    }\n\n    // Ensures immutable event ownership fields cannot be altered, added, or deleted after creation\n    function eventOwnershipUnchanged() {\n      return ('createdBy' in request.resource.data == 'createdBy' in resource.data) &&\n             (!('createdBy' in resource.data) || request.resource.data.createdBy == resource.data.createdBy) &&\n             ('hostUid' in request.resource.data == 'hostUid' in resource.data) &&\n             (!('hostUid' in resource.data) || request.resource.data.hostUid == resource.data.hostUid) &&\n             ('ownerUid' in request.resource.data == 'ownerUid' in resource.data) &&\n             (!('ownerUid' in resource.data) || request.resource.data.ownerUid == resource.data.ownerUid) &&\n             ('creatorUid' in request.resource.data == 'creatorUid' in resource.data) &&\n             (!('creatorUid' in resource.data) || request.resource.data.creatorUid == resource.data.creatorUid) &&\n             ('host_id' in request.resource.data == 'host_id' in resource.data) &&\n             (!('host_id' in resource.data) || request.resource.data.host_id == resource.data.host_id);\n    }\n\n    function eventUserUnchanged() {\n      return ('userId' in request.resource.data == 'userId' in resource.data) &&\n             (!('userId' in resource.data) || request.resource.data.userId == resource.data.userId) &&\n             ('user_id' in request.resource.data == 'user_id' in resource.data) &&\n             (!('user_id' in resource.data) || request.resource.data.user_id == resource.data.user_id);\n    }\n\n    // =========================================================================\n    // 1. USER PROFILES, PREFERENCES & SUBCOLLECTIONS\n    // =========================================================================\n\n    match /users/{userId} {\n      allow read: if isOwner(userId) || isAdmin();\n      \n      // Separate Create and Update permissions\n      allow create: if isOwner(userId) && (hasNoProtectedFieldsOnCreate() || isUnprivilegedCreate());\n      allow update: if (isOwner(userId) && protectedFieldsUnchanged()) || isAdmin();\n      allow delete: if isAdmin();\n\n      // Explicit rules for users/{userId}/settings/preferences\n      match /settings/preferences {\n        allow read: if isOwner(userId) || isAdmin();\n        allow create: if isOwner(userId) && (hasNoProtectedFieldsOnCreate() || isUnprivilegedCreate());\n        allow update: if (isOwner(userId) && protectedFieldsUnchanged()) || isAdmin();\n        allow delete: if isAdmin();\n      }\n\n      // Explicit rules for users/{userId}/events/{eventId} (FULL CRUD FOR USER)\n      match /events/{eventId} {\n        allow read: if isOwner(userId) || isAdmin();\n        allow create: if isOwner(userId);\n        allow update: if (isOwner(userId) && eventOwnershipUnchanged() && eventUserUnchanged()) || isAdmin();\n        allow delete: if isOwner(userId) || isAdmin();\n      }\n\n      // Explicit rules for users/{userId}/celebrations/{eventId}\n      match /celebrations/{eventId} {\n        allow read: if isOwner(userId) || isAdmin();\n        allow create: if isOwner(userId);\n        allow update: if (isOwner(userId) && eventOwnershipUnchanged() && eventUserUnchanged()) || isAdmin();\n        allow delete: if isOwner(userId) || isAdmin();\n      }\n\n      // Explicit rules for users/{userId}/custom_holidays/{eventId}\n      match /custom_holidays/{eventId} {\n        allow read: if isOwner(userId) || isAdmin();\n        allow create: if isOwner(userId);\n        allow update: if (isOwner(userId) && eventOwnershipUnchanged() && eventUserUnchanged()) || isAdmin();\n        allow delete: if isOwner(userId) || isAdmin();\n      }\n\n      // Explicit rules for users/{userId}/deleted_events/{eventId}\n      match /deleted_events/{eventId} {\n        allow read: if isOwner(userId) || isAdmin();\n        allow create: if isOwner(userId);\n        allow update, delete: if isOwner(userId) || isAdmin();\n      }\n\n      // Explicit fallback for other subcollections under users/{userId}\n      match /{subcollection=**} {\n        allow read, write: if isOwner(userId) || isAdmin();\n      }\n    }\n\n    // =========================================================================\n    // 2. SYSTEM SETTINGS & CONFIGURATION (Public Read, Admin Write Only)\n    // =========================================================================\n\n    match /settings/{settingId} {\n      allow read: if true;\n      allow write: if isAdmin();\n    }\n\n    match /app_config/{configId} {\n      allow read: if true;\n      allow write: if isAdmin();\n    }\n\n    match /system_config/{configId} {\n      allow read: if true;\n      allow write: if isAdmin();\n    }\n\n    match /admob_campaigns/{campaignId} {\n      allow read: if isAuthenticated();\n      allow write: if isAdmin();\n    }\n\n    // =========================================================================\n    // 3. CELEBRATIONS & EVENTS (Ownership & Privacy Enforcement)\n    // =========================================================================\n\n    // Collection-Group Rule for Events across all subcollections (Owner & Admin)\n    match /{path=**}/events/{eventId} {\n      allow read: if isEventOwner(resource.data) || isAdmin();\n    }\n\n    // Collection-Group Rule for User Preferences (Admin Read Access for Monetization Analytics)\n    match /{path=**}/preferences/{prefId} {\n      allow read: if isAdmin();\n    }\n\n    match /celebrations/{celebrationId} {\n      allow read: if resource.data.isPublic == true ||\n                     isEventOwner(resource.data) ||\n                     !hasAnyOwnerField(resource.data) ||\n                     isAdmin();\n      allow create: if isValidNewEventOwnership();\n      allow update: if isAdmin() || (\n        isEventOwner(resource.data) && \n        eventOwnershipUnchanged() &&\n        eventUserUnchanged()\n      );\n      allow delete: if isAdmin() || isEventOwner(resource.data);\n    }\n\n    match /events/{eventId} {\n      allow read: if resource.data.isPublic == true ||\n                     isEventOwner(resource.data) ||\n                     !hasAnyOwnerField(resource.data) ||\n                     isAdmin();\n      allow create: if isValidNewEventOwnership();\n      allow update: if isAdmin() || (\n        isEventOwner(resource.data) && \n        eventOwnershipUnchanged() &&\n        eventUserUnchanged()\n      );\n      allow delete: if isAdmin() || isEventOwner(resource.data);\n    }\n\n    match /celebration_events/{eventId} {\n      allow read: if isAuthenticated();\n      allow write: if isAdmin();\n    }\n\n    match /user_events/{eventId} {\n      allow read: if isEventOwner(resource.data) || !hasAnyOwnerField(resource.data) || isAdmin();\n      allow create: if isValidNewEventOwnership();\n      allow update: if isAdmin() || (\n        isEventOwner(resource.data) && \n        eventOwnershipUnchanged() &&\n        eventUserUnchanged()\n      );\n      allow delete: if isAdmin() || isEventOwner(resource.data);\n    }\n\n    // =========================================================================\n    // 4. REVIEWS & FEEDBACK\n    // =========================================================================\n\n    match /reviews/{reviewId} {\n      allow read: if resource.data.status == 'APPROVED' || \n                     (isAuthenticated() && resource.data.userId == request.auth.uid) || \n                     isAdmin();\n      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;\n      allow update, delete: if isAdmin();\n    }\n\n    match /user_reviews/{reviewId} {\n      allow read: if isOwner(resource.data.userId) || isAdmin();\n      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;\n      allow update, delete: if isAdmin();\n    }\n\n    match /user_review_triggers/{userId} {\n      allow read, write: if isOwner(userId) || isAdmin();\n    }\n\n    match /user_review_reminders/{userId} {\n      allow read, write: if isOwner(userId) || isAdmin();\n    }\n\n    // =========================================================================\n    // 5. FINANCIAL LEDGERS, WEBHOOKS, TELEMETRY & PUSH TRIGGERS\n    // =========================================================================\n\n    match /analytics/{document=**} {\n      allow read: if isAdmin();\n      allow write: if false; // Server Admin SDK Only\n    }\n\n    match /processed_stripe_events/{eventId} {\n      allow read: if isAdmin();\n      allow write: if false; // Server Admin SDK Only\n    }\n\n    match /stripe_transactions/{transactionId} {\n      allow read: if isAdmin();\n      allow write: if false; // Server Admin SDK Only\n    }\n\n    match /financial_payouts/{payoutId} {\n      allow read, write: if isAdmin();\n    }\n\n    match /payouts/{payoutId} {\n      allow read, write: if isAdmin();\n    }\n\n    match /audit_logs/{logId} {\n      allow read: if isAdmin();\n      allow write: if false; // Server Admin SDK Only\n    }\n\n    match /user_push_triggers/{userId} {\n      allow read, write: if isOwner(userId) || isAdmin();\n    }\n\n    // =========================================================================\n    // 6. DEFAULT DENY\n    // =========================================================================\n\n    match /{document=**} {\n      allow read, write: if false;\n    }\n  }\n}\n"
+  },
+  "firebaseConfig": {
+    "projectId": "joyful-days",
+    "firestoreDatabaseId": "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1",
+    "authDomain": "joyful-days.firebaseapp.com",
+    "storageBucket": "joyful-days.firebasestorage.app"
+  },
+  "iamPolicySnapshot": {
+    "project": "joyful-days",
+    "bindings": [
+      {
+        "role": "roles/datastore.user",
+        "members": [
+          "serviceAccount:joyfuldays-admin-dashboard@joyful-days.iam.gserviceaccount.com"
+        ]
+      },
+      {
+        "role": "roles/storage.objectAdmin",
+        "members": [
+          "serviceAccount:joyfuldays-admin-dashboard@joyful-days.iam.gserviceaccount.com"
+        ]
+      },
+      {
+        "role": "roles/run.invoker",
+        "members": [
+          "allUsers"
+        ]
+      }
+    ]
+  },
+  "applicationArtifacts": {
+    "name": "react-example",
+    "version": "0.0.0",
+    "entrypoint": "server.ts",
+    "dependencies": {
+      "@google/genai": "^2.4.0",
+      "@tailwindcss/vite": "^4.1.14",
+      "@types/qrcode": "^1.5.6",
+      "@vitejs/plugin-react": "^5.0.4",
+      "dotenv": "^17.2.3",
+      "express": "^4.21.2",
+      "firebase": "^12.18.0",
+      "firebase-admin": "^14.3.0",
+      "helmet": "^8.3.0",
+      "lucide-react": "^0.546.0",
+      "motion": "^12.23.24",
+      "otpauth": "^9.5.1",
+      "qrcode": "^1.5.4",
+      "react": "^19.0.1",
+      "react-dom": "^19.0.1",
+      "recharts": "^3.10.1",
+      "stripe": "^22.6.2",
+      "vite": "^6.2.3"
+    },
+    "scripts": {
+      "dev": "tsx server.ts",
+      "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+      "start": "node dist/server.cjs",
+      "preview": "vite preview",
+      "clean": "rm -rf dist server.js",
+      "lint": "tsc --noEmit"
+    },
+    "nodeEngine": ">=20.0.0"
+  },
+  "metadata": {
+    "backupId": "SYS-20261020202704-0f36c9",
+    "createdBy": "Admin@7tasker.com",
+    "triggerMode": "MANUAL",
+    "admob": {
+      "adsEnabled": true,
+      "bannerEnabled": true,
+      "isRewardedAdEnabled": true,
+      "rewardedAdUnitId": "ca-app-pub-9690446677056751/9150221927",
+      "bannerAdUnitId": "ca-app-pub-9690446677056751/5913164004",
+      "isPostSaveAdEnabled": false
+    },
+    "removeAds": {
+      "enabled": true,
+      "stripePriceId": "price_1UJWeQDJGa9mhIUX1Bb604Eq"
+    },
+    "gifting": {
+      "isGiftingEnabled": true
+    },
+    "reviewReminder": {
+      "cooldownHours": 48,
+      "maxAttempts": 4
+    }
+  },
+  "globalSettings": {
+    "admob": {
+      "adsEnabled": true,
+      "bannerEnabled": true,
+      "isRewardedAdEnabled": true,
+      "rewardedAdUnitId": "ca-app-pub-9690446677056751/9150221927",
+      "bannerAdUnitId": "ca-app-pub-9690446677056751/5913164004",
+      "isPostSaveAdEnabled": false
+    },
+    "removeAds": {
+      "enabled": true,
+      "stripePriceId": "price_1UJWeQDJGa9mhIUX1Bb604Eq"
+    },
+    "gifting": {
+      "isGiftingEnabled": true
+    },
+    "reviewReminder": {
+      "cooldownHours": 48,
+      "maxAttempts": 4
+    }
+  }
+}

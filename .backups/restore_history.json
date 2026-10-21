@@ -1,0 +1,17 @@
+[
+  {
+    "id": "RST-MVHW9UQ2-626c",
+    "backupId": "USR-20261021091314-e79a1e",
+    "category": "USER",
+    "version": "JoyfulDays v4.0",
+    "sourceDatabaseId": "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1",
+    "destinationDatabaseId": "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1",
+    "isCrossDatabase": false,
+    "restoredAt": "2026-10-21 09:13:14 UTC",
+    "actor": "admin@7tasker.com",
+    "status": "COMPLETED",
+    "safetyCheckpointId": "USR-20261021091314-5beff1",
+    "details": "Successfully restored USER & DATABASE collections into destination database 'ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1'. User profiles, preferences (rewarded-ad watched progress), events, and unlock entitlements restored. Payment ledger preserved intact. Automated pre-restore safety checkpoint 'USR-20261021091314-5beff1' created.",
+    "artifactsVerified": true
+  }
+]

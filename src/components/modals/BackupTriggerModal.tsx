@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { HardDrive, RefreshCw, X, Lock, CheckCircle2, Cloud } from 'lucide-react';
-import { DatabaseBackup } from '../../types';
+import { HardDrive, RefreshCw, X, Lock, CheckCircle2, Cloud, Server, Users } from 'lucide-react';
+import { DatabaseBackup, BackupCategory } from '../../types';
 import { StorageService } from '../../services/storageService';
 
 interface BackupTriggerModalProps {
@@ -14,7 +14,7 @@ export const BackupTriggerModal: React.FC<BackupTriggerModalProps> = ({
   onClose,
   onSuccess,
 }) => {
-  const [selectedType, setSelectedType] = useState<DatabaseBackup['backupType']>('full_database');
+  const [selectedCategory, setSelectedCategory] = useState<BackupCategory>('SYSTEM');
   const [isProcessing, setIsProcessing] = useState(false);
 
   if (!isOpen) return null;
@@ -23,7 +23,7 @@ export const BackupTriggerModal: React.FC<BackupTriggerModalProps> = ({
     e.preventDefault();
     setIsProcessing(true);
     setTimeout(() => {
-      const bkp = StorageService.createBackup(selectedType);
+      const bkp = StorageService.createBackup(selectedCategory);
       setIsProcessing(false);
       onSuccess(bkp);
       onClose();
@@ -36,7 +36,10 @@ export const BackupTriggerModal: React.FC<BackupTriggerModalProps> = ({
         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
           <div className="flex items-center gap-2">
             <HardDrive className="w-5 h-5 text-cyan-400" />
-            <h3 className="font-bold text-white text-base">Trigger Instant Snapshot</h3>
+            <div>
+              <h3 className="font-bold text-white text-base">Trigger Instant Snapshot</h3>
+              <span className="text-[10px] font-mono text-cyan-400">JoyfulDays v4.0</span>
+            </div>
           </div>
           <button
             type="button"
@@ -50,24 +53,47 @@ export const BackupTriggerModal: React.FC<BackupTriggerModalProps> = ({
         <form onSubmit={handleGenerate} className="space-y-4 text-xs">
           <div>
             <label className="block font-semibold text-slate-300 mb-1.5">
-              Snapshot Scope Partition
+              Select Backup Category
             </label>
-            <select
-              value={selectedType}
-              onChange={(e) => setSelectedType(e.target.value as any)}
-              className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-white"
-            >
-              <option value="full_database">Full Database (All Partitions)</option>
-              <option value="celebrations_events">Celebrations & Events Registry</option>
-              <option value="financial_ledger">Financial Ledger & Payout History</option>
-              <option value="users_auth">Users Accounts & Loyalty Credentials</option>
-            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedCategory('SYSTEM')}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  selectedCategory === 'SYSTEM'
+                    ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-200'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-bold text-xs mb-1">
+                  <Server className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>SYSTEM</span>
+                </div>
+                <p className="text-[10px] text-slate-400">Cloud Run, Rules, AdMob, Configs</p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedCategory('USER')}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  selectedCategory === 'USER'
+                    ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-200'
+                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 font-bold text-xs mb-1">
+                  <Users className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>USER</span>
+                </div>
+                <p className="text-[10px] text-slate-400">Users, Preferences, Events, Ledger</p>
+              </button>
+            </div>
           </div>
 
           <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-slate-400">
             <div className="flex items-center justify-between text-cyan-300 font-mono font-medium">
               <span className="flex items-center gap-1">
-                <Lock className="w-3.5 h-3.5" /> AES-256-GCM
+                <Lock className="w-3.5 h-3.5" /> AES-256 Vault
               </span>
               <span>SHA-256 Checksum</span>
             </div>

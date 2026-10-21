@@ -14,24 +14,29 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
   };
 
   try {
-    // 1. TOP PRIORITY: Verified active admin session token from localStorage
+    // 1. Check for active Firebase ID token from signed-in user
+    if (auth.currentUser) {
+      try {
+        const idToken = await auth.currentUser.getIdToken(true);
+        if (idToken) {
+          headers['x-firebase-auth'] = `Bearer ${idToken}`;
+        }
+      } catch (err) {
+        console.warn('[API Client] Could not retrieve Firebase ID token:', err);
+      }
+    }
+
+    // 2. Verified active admin session token from localStorage
     const session = AdminSessionService.getSession();
     if (session && session.token && AdminSessionService.isSessionValid()) {
       headers['Authorization'] = `Bearer ${session.token}`;
       return headers;
     }
 
-    // 2. SECONDARY FALLBACK: Force-refreshed Firebase ID token to capture custom admin claims
-    if (
-      auth.currentUser &&
-      auth.currentUser.email &&
-      StorageService.isAuthorizedAdmin(auth.currentUser.email)
-    ) {
-      const token = await auth.currentUser.getIdToken(true);
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-        return headers;
-      }
+    // 3. Fallback: Firebase ID token as primary Authorization header
+    if (headers['x-firebase-auth']) {
+      headers['Authorization'] = headers['x-firebase-auth'];
+      return headers;
     }
   } catch (err) {
     console.warn('[API Client] Could not construct authorization headers:', err);

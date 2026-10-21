@@ -34,6 +34,7 @@ import {
 import { authorizedFetch } from '../../../services/apiClient';
 import {
   db,
+  auth,
   doc,
   collection,
   collectionGroup,
@@ -420,7 +421,7 @@ export const RemoveAdsAndAnalyticsPanel: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({
           ...config,
-          adminEmail: 'Admin@7tasker.com',
+          adminEmail: auth.currentUser?.email || 'Admin@7tasker.com',
         }),
       });
 

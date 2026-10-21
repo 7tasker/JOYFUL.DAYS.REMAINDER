@@ -522,18 +522,90 @@ export type CelebrationEvent = {
   paymentMode?: 'event_only' | 'group_pool' | 'single_gifts' | 'both';
 };
 
-// Module 4: Database Backup Management & Audit Logs
+// Module 4: Database Backup Management & Audit Logs (JoyfulDays v4.0)
+export type BackupCategory = 'SYSTEM' | 'USER';
+
+export type FirestoreDatabaseInfo = {
+  id: string; // e.g. "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1" or "(default)"
+  name?: string;
+  projectId: string;
+  type: 'NAMED' | 'DEFAULT';
+  locationId: string;
+  isCurrentAppDatabase: boolean;
+  status: 'ACTIVE' | 'NOT_FOUND' | 'UNPROVISIONED' | 'VERIFIED';
+  isAccessible: boolean;
+  latencyMs?: number;
+  verifiedAt?: string;
+  notes?: string;
+};
+
 export type DatabaseBackup = {
   id: string;
   fileName: string;
-  backupType: 'full_database' | 'celebrations_events' | 'financial_ledger' | 'users_auth';
+  category: BackupCategory;
+  version: string; // e.g. "JoyfulDays v4.0"
+  projectId?: string;
+  sourceDatabaseId?: string;
+  targetDatabaseId?: string;
+  backupType?: 'full_database' | 'celebrations_events' | 'financial_ledger' | 'users_auth' | 'system_bundle' | 'user_bundle';
   fileSizeMb: number;
+  fileSizeBytes?: number;
+  fileSizeFormatted?: string;
   createdAt: string;
-  status: 'completed' | 'verifying' | 'in_progress' | 'restoring';
+  createdBy?: string;
+  status: 'completed' | 'verifying' | 'in_progress' | 'restoring' | 'failed';
   checksumSha256: string;
   retentionDays: number;
-  storageTarget: 'GCS_Primary (asia-east1)' | 'AWS_S3_Replica (us-west-2)' | 'Coldline_Archive';
+  storageTarget: string;
   downloadUrl?: string;
+  triggerMode?: 'MANUAL' | 'AUTOMATIC_DAILY';
+  componentsSummary?: string[];
+  isRestorable?: boolean;
+  fullyRestorable?: boolean;
+  restorationStatus?: 'FULLY_RESTORABLE' | 'VALIDATION_REQUIRED' | 'PREREQUISITES_MISSING';
+  validationDetails?: {
+    isChecksumValid: boolean;
+    validatedAt: string;
+    componentsCount: number;
+    validationLog: string[];
+    databaseVerified?: boolean;
+    databaseId?: string;
+  };
+  metadata?: Record<string, any>;
+};
+
+export type BackupScheduleConfig = {
+  enabled: boolean;
+  timeUtc: string; // e.g. "02:00"
+  timezone: string; // e.g. "UTC"
+  retentionDays: number; // e.g. 30
+  targetDatabaseId?: string;
+  projectId?: string;
+  lastRunStatus?: 'COMPLETED' | 'FAILED' | 'PENDING' | 'IN_PROGRESS';
+  lastRunTimestamp?: string;
+  lastRunBackupId?: string;
+  lastError?: string | null;
+};
+
+export type BackupSchedules = {
+  system: BackupScheduleConfig;
+  user: BackupScheduleConfig;
+};
+
+export type RestoreRecord = {
+  id: string;
+  backupId: string;
+  category: BackupCategory;
+  version: string;
+  sourceDatabaseId?: string;
+  destinationDatabaseId?: string;
+  isCrossDatabase?: boolean;
+  restoredAt: string;
+  actor: string;
+  status: 'COMPLETED' | 'FAILED' | 'PREVIEW';
+  safetyCheckpointId?: string;
+  details: string;
+  artifactsVerified?: boolean;
 };
 
 export type AuditLogEntry = {

@@ -8,8 +8,26 @@ import helmet from "helmet";
 import { initializeApp as initAdminApp, getApps as getAdminApps } from "firebase-admin/app";
 import { getAuth as getAdminAuth } from "firebase-admin/auth";
 import { getMessaging as getAdminMessaging } from "firebase-admin/messaging";
+import fs from "fs";
+import {
+  initBackupStorage,
+  getBackupRegistry,
+  getBackupSchedules,
+  saveBackupSchedules,
+  getRestoreHistory,
+  createRealBackup,
+  validateBackupOnDisk,
+  getBackupFilePath,
+  checkAndRunScheduledBackups,
+  startDailyBackupScheduler,
+  getFirestoreDatabasesList,
+  verifyDatabaseAccess,
+  executeRestore,
+  DEFAULT_PROJECT_ID,
+  DEFAULT_DATABASE_ID,
+} from "./src/server/backupManager";
 
-const app = express();
+export const app = express();
 app.set("trust proxy", true);
 const PORT = 3000;
 
@@ -159,7 +177,7 @@ function clearAdminFailedAttempts(ipOrEmail: string) {
 // Initialize Firebase Admin SDK safely using Application Default Credentials (ADC) or project configuration
 import firebaseAppConfig from "./firebase-applet-config.json";
 
-const firestoreDatabaseId = (firebaseAppConfig as any).firestoreDatabaseId || "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1";
+export const firestoreDatabaseId = (firebaseAppConfig as any).firestoreDatabaseId || "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1";
 
 if (!getAdminApps().length) {
   try {
@@ -240,7 +258,7 @@ export function getActiveStripeClient(): Stripe {
 
 const stripe = getActiveStripeClient();
 
-let removeAdsConfigState = {
+export let removeAdsConfigState = {
   enabled: true,
   stripePriceId: "price_1UJWeQDJGa9mhIUX1Bb604Eq",
   displayPrice: "$2.99",
@@ -249,7 +267,7 @@ let removeAdsConfigState = {
   updatedBy: "Admin@7tasker.com",
 };
 
-const FIRESTORE_REMOVE_ADS_REST_URL = `https://firestore.googleapis.com/v1/projects/joyful-days/databases/${firestoreDatabaseId}/documents/settings/remove_ads`;
+export const FIRESTORE_REMOVE_ADS_REST_URL = `https://firestore.googleapis.com/v1/projects/joyful-days/databases/${firestoreDatabaseId}/documents/settings/remove_ads`;
 
 async function syncRemoveAdsStateFromFirestore(force = false): Promise<void> {
   try {
@@ -552,6 +570,7 @@ export const requireAdminAuth = async (
         // accidentally bypass the claim requirement through the root-admin bootstrap allowance.
         if (decodedToken.admin === true) {
           (req as any).user = { ...decodedToken, email, admin: true };
+          (req as any).firebaseIdToken = token;
           return next();
         }
 
@@ -2089,7 +2108,239 @@ app.get("/api/reviews/user-state/:userId", async (req, res) => {
   });
 });
 
-// 11. [ADMIN-ONLY] Database Backup Export Route
+// 11. [ADMIN-ONLY] JoyfulDays v4.0 Backup & Recovery Manager Suite
+// A. Query Firestore Databases List (Live Google Cloud / Firebase Project Probe)
+app.get("/api/backups/databases", requireAdminAuth, async (req, res) => {
+  try {
+    const databases = await getFirestoreDatabasesList();
+    res.json({
+      success: true,
+      projectId: DEFAULT_PROJECT_ID,
+      defaultDatabaseId: DEFAULT_DATABASE_ID,
+      databases,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to retrieve Firestore databases list" });
+  }
+});
+
+// A2. Verify Individual Database Connectivity & Permissions
+app.post("/api/backups/databases/verify", requireAdminAuth, async (req, res) => {
+  try {
+    const { databaseId } = req.body || {};
+    const result = await verifyDatabaseAccess(databaseId || DEFAULT_DATABASE_ID);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Database verification failed" });
+  }
+});
+
+// B. Query Backups List (Filtered by SYSTEM or USER)
+app.get("/api/backups", requireAdminAuth, (req, res) => {
+  try {
+    const category = req.query.category as string | undefined;
+    const allBackups = getBackupRegistry();
+    const filtered = category
+      ? allBackups.filter((b) => b.category.toUpperCase() === category.toUpperCase())
+      : allBackups;
+    res.json({
+      success: true,
+      category: category || "ALL",
+      count: filtered.length,
+      backups: filtered,
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to retrieve backups" });
+  }
+});
+
+// C. Create Real Backup (SYSTEM or USER, scoped to target database)
+app.post("/api/backups/create", requireAdminAuth, async (req, res) => {
+  try {
+    const { category, targetDatabaseId } = req.body || {};
+    if (!category || (category !== "SYSTEM" && category !== "USER")) {
+      return res.status(400).json({ success: false, error: "Invalid backup category. Must be SYSTEM or USER." });
+    }
+
+    const actor = (req as any).user?.email || "Admin@7tasker.com";
+    const dbId = (targetDatabaseId || DEFAULT_DATABASE_ID).trim();
+
+    // For SYSTEM backups, refresh and pass live settings
+    let liveSettings: any = undefined;
+    if (category === "SYSTEM") {
+      await syncAdMobStateFromFirestore(true);
+      await syncAppFeatureStateFromFirestore(true);
+      await syncRemoveAdsStateFromFirestore(true);
+      await syncReviewReminderStateFromFirestore(true);
+      liveSettings = {
+        admob: { ...admobSettingsState },
+        removeAds: { ...removeAdsConfigState },
+        gifting: { ...appFeatureState },
+        reviewReminder: { ...reviewReminderState },
+      };
+    }
+
+    const backup = await createRealBackup(category, actor, "MANUAL", liveSettings, dbId);
+
+    res.json({
+      success: true,
+      message: `Successfully generated genuine ${category} backup archive scoped to database '${dbId}'`,
+      backup,
+    });
+  } catch (err: any) {
+    console.error("[Backup API] Creation error:", err);
+    res.status(500).json({ success: false, error: err?.message || "Failed to create backup" });
+  }
+});
+
+// D. Get Automated Daily Backup Schedules
+app.get("/api/backups/schedules", requireAdminAuth, (req, res) => {
+  try {
+    const schedules = getBackupSchedules();
+    res.json({ success: true, schedules });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to get schedules" });
+  }
+});
+
+// E. Update Automated Daily Backup Schedules
+app.post("/api/backups/schedules", requireAdminAuth, (req, res) => {
+  try {
+    const { system, user } = req.body;
+    const current = getBackupSchedules();
+    const updated = {
+      system: { ...current.system, ...(system || {}) },
+      user: { ...current.user, ...(user || {}) },
+    };
+    saveBackupSchedules(updated);
+    res.json({ success: true, message: "Backup schedules updated successfully", schedules: updated });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to update schedules" });
+  }
+});
+
+// F. Validate Backup Integrity & Cryptographic Checksum
+app.post("/api/backups/:id/validate", requireAdminAuth, (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = validateBackupOnDisk(id);
+    if (!result.success) {
+      return res.status(404).json(result);
+    }
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Validation failed" });
+  }
+});
+
+// G. Download Real Backup File
+app.get("/api/backups/:id/download", (req, res) => {
+  try {
+    const { id } = req.params;
+    const filePath = getBackupFilePath(id);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ success: false, error: "Backup file not found in storage vault" });
+    }
+    const fileName = path.basename(filePath);
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.setHeader("Content-Type", "application/json");
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Download failed" });
+  }
+});
+
+// H. Restore Preview
+app.post("/api/backups/restore-preview", requireAdminAuth, (req, res) => {
+  try {
+    const { backupId, destinationDatabaseId } = req.body || {};
+    const registry = getBackupRegistry();
+    const backup = registry.find((b) => b.id === backupId);
+    if (!backup) {
+      return res.status(404).json({ success: false, error: "Backup not found" });
+    }
+
+    const srcDb = backup.sourceDatabaseId || DEFAULT_DATABASE_ID;
+    const destDb = (destinationDatabaseId || srcDb).trim();
+    const isCrossDatabase = srcDb !== destDb;
+
+    const preview = {
+      backupId: backup.id,
+      category: backup.category,
+      version: backup.version || "JoyfulDays v4.0",
+      createdAt: backup.createdAt,
+      checksumSha256: backup.checksumSha256,
+      sourceDatabaseId: srcDb,
+      destinationDatabaseId: destDb,
+      isCrossDatabase,
+      targetDatabase: destDb,
+      targetCloudRun: "joyfuldays-admin-dashboard",
+      componentsToRestore: backup.componentsSummary || [],
+      safetyGuards: {
+        preservesUserRecords: backup.category === "SYSTEM",
+        preservesSystemConfig: backup.category === "USER",
+        preRestoreSafetyCheckpointRequired: true,
+        phase: "Full Restoration Suite Ready",
+      },
+      warning: isCrossDatabase
+        ? `CROSS-DATABASE RESTORATION WARNING: The backup was created from source database '${srcDb}' but will be restored into destination database '${destDb}'. Explicit administrator authorization required.`
+        : backup.category === "USER"
+          ? `Restoring this USER & DATABASE backup will revert user preferences, events, and unlock progress in '${destDb}' to the state captured on ${backup.createdAt}. Existing Stripe payment transaction ledger will remain preserved.`
+          : `Restoring this SYSTEM backup will update platform settings and Cloud Run configurations for '${destDb}' without altering user accounts, reward progress, or payment transactions.`,
+    };
+
+    res.json({ success: true, preview });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to generate restore preview" });
+  }
+});
+
+// I. Execute Restoration
+app.post("/api/backups/restore/execute", requireAdminAuth, async (req, res) => {
+  try {
+    const { backupId, destinationDatabaseId, confirmCrossDatabase } = req.body || {};
+    const actor = (req as any).user?.email || "Admin@7tasker.com";
+
+    const result = await executeRestore({
+      backupId,
+      destinationDatabaseId: destinationDatabaseId || DEFAULT_DATABASE_ID,
+      confirmCrossDatabase: Boolean(confirmCrossDatabase),
+      actor,
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    res.json(result);
+  } catch (err: any) {
+    console.error("[Backup Restore API] Execution error:", err);
+    res.status(500).json({ success: false, error: err?.message || "Restoration execution failed" });
+  }
+});
+
+// J. Restore History Ledger
+app.get("/api/backups/restore-history", requireAdminAuth, (req, res) => {
+  try {
+    const history = getRestoreHistory();
+    res.json({ success: true, history });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Failed to get restore history" });
+  }
+});
+
+// K. Scheduled Run Webhook (For GCP Cloud Scheduler or Cron)
+app.post("/api/backups/scheduled-run", async (req, res) => {
+  try {
+    const result = await checkAndRunScheduledBackups();
+    res.json({ success: true, result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message || "Scheduled backup run failed" });
+  }
+});
+
+// Legacy backward-compatibility backup export route
 app.get("/api/backup/export", requireAdminAuth, (req, res) => {
   const backupData = {
     exportTimestamp: new Date().toISOString(),
@@ -2370,41 +2621,171 @@ app.get("/api/remove-ads/config", async (req, res) => {
 });
 
 // 17. [ADMIN-ONLY] Update Remove Ads Configuration Endpoint
-app.post("/api/remove-ads/config", requireAdminAuth, async (req, res) => {
-  const updates = req.body;
-  if (!updates || typeof updates !== "object") {
-    return res.status(400).json({ success: false, error: "Invalid payload body" });
+export interface PriceValidationResult {
+  valid: boolean;
+  error?: string;
+  expectedAmountCents?: number;
+  formattedDisplayPrice?: string;
+  normalizedCurrency?: string;
+}
+
+export async function validateStripePriceConfiguration(
+  stripePriceId?: string,
+  displayPrice?: string | number,
+  currency?: string,
+  stripeClient?: Stripe
+): Promise<PriceValidationResult> {
+  if (!stripePriceId || typeof stripePriceId !== "string" || !stripePriceId.trim().startsWith("price_")) {
+    return {
+      valid: false,
+      error: "Stripe Price ID must be a valid identifier starting with 'price_'.",
+    };
   }
 
-  if (typeof updates.enabled === "boolean") removeAdsConfigState.enabled = updates.enabled;
-  if (typeof updates.stripePriceId === "string") removeAdsConfigState.stripePriceId = updates.stripePriceId.trim();
-  if (updates.displayPrice !== undefined && updates.displayPrice !== null) {
-    const rawPrice = updates.displayPrice;
-    if (typeof rawPrice === "number") {
-      removeAdsConfigState.displayPrice = Number.isInteger(rawPrice) ? `$${rawPrice}.00` : `$${rawPrice}`;
-    } else if (typeof rawPrice === "string") {
-      const trimmed = rawPrice.trim();
-      removeAdsConfigState.displayPrice = trimmed.startsWith("$") ? trimmed : `$${trimmed}`;
+  const cleanPriceId = stripePriceId.trim();
+
+  // Validate and normalize currency
+  const normalizedCurrency = (currency && typeof currency === "string" && currency.trim() !== "")
+    ? currency.trim().toUpperCase()
+    : "USD";
+
+  if (!/^[A-Z]{3}$/.test(normalizedCurrency)) {
+    return {
+      valid: false,
+      error: `Invalid currency format: '${currency}'. Must be a 3-letter ISO currency code (e.g., USD).`,
+    };
+  }
+
+  // Validate and parse displayPrice
+  let parsedAmountNumber: number;
+  let formattedDisplayPrice: string;
+
+  if (typeof displayPrice === "number") {
+    if (isNaN(displayPrice) || displayPrice <= 0) {
+      return {
+        valid: false,
+        error: "Display price must be greater than zero.",
+      };
+    }
+    parsedAmountNumber = displayPrice;
+    formattedDisplayPrice = Number.isInteger(displayPrice) ? `$${displayPrice}.00` : `$${displayPrice.toFixed(2)}`;
+  } else if (typeof displayPrice === "string") {
+    const cleaned = displayPrice.replace(/[\$,\s]/g, "");
+    parsedAmountNumber = parseFloat(cleaned);
+    if (isNaN(parsedAmountNumber) || parsedAmountNumber <= 0) {
+      return {
+        valid: false,
+        error: `Invalid display price: '${displayPrice}'. Must be a valid positive amount.`,
+      };
+    }
+    formattedDisplayPrice = Number.isInteger(parsedAmountNumber) ? `$${parsedAmountNumber}.00` : `$${parsedAmountNumber.toFixed(2)}`;
+  } else {
+    return {
+      valid: false,
+      error: "Display price is required and must be a number or string.",
+    };
+  }
+
+  const expectedAmountCents = Math.round(parsedAmountNumber * 100);
+
+  // If Stripe client is available and active (not placeholder mock key), verify against Stripe API
+  const activeStripe = stripeClient || getActiveStripeClient();
+  const stripeKey = getActiveStripeKey();
+  const isMockKey = !stripeClient && (stripeKey.includes("mock_key") || stripeKey === "sk_test_mock_key_for_testing");
+
+  if (!isMockKey) {
+    try {
+      const retrievedPrice = await activeStripe.prices.retrieve(cleanPriceId);
+      if (retrievedPrice.active === false) {
+        return {
+          valid: false,
+          error: `Stripe Price '${cleanPriceId}' is marked as inactive in Stripe.`,
+        };
+      }
+      if (retrievedPrice.currency && retrievedPrice.currency.toUpperCase() !== normalizedCurrency) {
+        return {
+          valid: false,
+          error: `Stripe Price currency (${retrievedPrice.currency.toUpperCase()}) does not match intended checkout currency (${normalizedCurrency}).`,
+        };
+      }
+      if (retrievedPrice.unit_amount !== null && retrievedPrice.unit_amount !== expectedAmountCents) {
+        return {
+          valid: false,
+          error: `Stripe Price ID (${cleanPriceId}) amount (${(retrievedPrice.unit_amount / 100).toFixed(2)} ${retrievedPrice.currency.toUpperCase()}) does not match intended checkout amount (${formattedDisplayPrice} ${normalizedCurrency}).`,
+        };
+      }
+    } catch (stripeErr: any) {
+      if (stripeErr?.statusCode === 404 || stripeErr?.code === "resource_missing") {
+        return {
+          valid: false,
+          error: `Stripe Price ID '${cleanPriceId}' does not exist in configured Stripe account.`,
+        };
+      }
+      return {
+        valid: false,
+        error: `Stripe verification failed: ${stripeErr?.message || stripeErr}`,
+      };
     }
   }
-  if (typeof updates.currency === "string" && updates.currency.trim() !== "") {
-    removeAdsConfigState.currency = updates.currency.trim().toUpperCase();
-  } else {
-    removeAdsConfigState.currency = "USD";
+
+  return {
+    valid: true,
+    expectedAmountCents,
+    formattedDisplayPrice,
+    normalizedCurrency,
+  };
+}
+
+export interface RemoveAdsConfigData {
+  enabled: boolean;
+  stripePriceId: string;
+  displayPrice: string;
+  currency: string;
+  lastUpdated: string;
+  updatedBy: string;
+}
+
+export async function persistRemoveAdsConfig(
+  targetConfig: RemoveAdsConfigData,
+  options: {
+    adminToken?: string | null;
+    firestoreDb?: any;
+    fetchClient?: typeof fetch;
+  } = {}
+): Promise<{ success: boolean; persistenceMethod: "admin-sdk" | "authenticated-rest"; error?: string; status?: number; targetDatabase: string }> {
+  const currentDb = options.firestoreDb !== undefined ? options.firestoreDb : db;
+  const currentFetch = options.fetchClient || fetch;
+  const adminToken = options.adminToken;
+  const targetDatabase = firestoreDatabaseId;
+
+  // 1. Attempt authorized Admin SDK connection to the exact named database
+  if (currentDb && typeof currentDb.collection === "function") {
+    try {
+      const docRef = currentDb.collection("settings").doc("remove_ads");
+      await docRef.set({
+        enabled: targetConfig.enabled,
+        stripePriceId: targetConfig.stripePriceId,
+        displayPrice: targetConfig.displayPrice,
+        currency: targetConfig.currency,
+        lastUpdated: targetConfig.lastUpdated,
+        updatedBy: targetConfig.updatedBy,
+        adminAuthSignature: ADMIN_AUTH_SIGNATURE,
+      }, { merge: true });
+      return { success: true, persistenceMethod: "admin-sdk", targetDatabase };
+    } catch (adminErr: any) {
+      console.warn("[Remove Ads Admin] Admin SDK write skipped/failed:", adminErr?.message || adminErr);
+    }
   }
 
-  const nowIso = new Date().toISOString();
-  removeAdsConfigState.lastUpdated = nowIso;
-  removeAdsConfigState.updatedBy = updates.adminEmail || "Admin@7tasker.com";
-
-  try {
+  // 2. Attempt authenticated REST PATCH using verified administrator identity
+  if (adminToken) {
     const fieldsToUpdate: Record<string, any> = {
-      enabled: convertToFirestoreValue(removeAdsConfigState.enabled),
-      stripePriceId: convertToFirestoreValue(removeAdsConfigState.stripePriceId),
-      displayPrice: convertToFirestoreValue(removeAdsConfigState.displayPrice),
-      currency: convertToFirestoreValue(removeAdsConfigState.currency),
-      lastUpdated: convertToFirestoreValue(removeAdsConfigState.lastUpdated),
-      updatedBy: convertToFirestoreValue(removeAdsConfigState.updatedBy),
+      enabled: convertToFirestoreValue(targetConfig.enabled),
+      stripePriceId: convertToFirestoreValue(targetConfig.stripePriceId),
+      displayPrice: convertToFirestoreValue(targetConfig.displayPrice),
+      currency: convertToFirestoreValue(targetConfig.currency),
+      lastUpdated: convertToFirestoreValue(targetConfig.lastUpdated),
+      updatedBy: convertToFirestoreValue(targetConfig.updatedBy),
       adminAuthSignature: convertToFirestoreValue(ADMIN_AUTH_SIGNATURE),
     };
     const updateMaskParams = [
@@ -2417,27 +2798,207 @@ app.post("/api/remove-ads/config", requireAdminAuth, async (req, res) => {
       "updateMask.fieldPaths=adminAuthSignature",
     ];
 
-    const patchUrl = `${FIRESTORE_REMOVE_ADS_REST_URL}?${updateMaskParams.join("&")}&key=${FIREBASE_API_KEY}`;
-    const patchRes = await fetch(patchUrl, {
+    // Authenticated REST PATCH with Authorization: Bearer <adminToken> to exact named database (NOT API-key only!)
+    const patchUrl = `${FIRESTORE_REMOVE_ADS_REST_URL}?${updateMaskParams.join("&")}`;
+    const patchRes = await currentFetch(patchUrl, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${adminToken}`,
+      },
       body: JSON.stringify({ fields: fieldsToUpdate }),
     });
 
     if (!patchRes.ok) {
       const errText = await patchRes.text();
-      throw new Error(`Firestore REST PATCH failed (${patchRes.status}): ${errText}`);
+      return {
+        success: false,
+        persistenceMethod: "authenticated-rest",
+        status: patchRes.status,
+        error: `Firestore authenticated REST write failed (${patchRes.status}): ${errText}`,
+        targetDatabase,
+      };
     }
 
-    res.json({
-      success: true,
-      message: "Remove Ads configuration updated and persisted to Firestore.",
-      config: removeAdsConfigState,
-    });
-  } catch (err: any) {
-    console.error("[Remove Ads Admin] Error persisting config:", err);
-    res.status(500).json({ success: false, error: err?.message || "Failed to persist Remove Ads config" });
+    return { success: true, persistenceMethod: "authenticated-rest", targetDatabase };
   }
+
+  // 3. Reject unauthenticated write: API-key-only writes are strictly forbidden
+  return {
+    success: false,
+    persistenceMethod: "authenticated-rest",
+    status: 403,
+    error: "Missing or insufficient permissions: Firestore write requires an authorized Admin SDK connection or verified administrator identity token. API-key-only writes are forbidden.",
+    targetDatabase,
+  };
+}
+
+export async function readBackAndVerifyRemoveAdsConfig(
+  targetConfig: RemoveAdsConfigData,
+  persistenceMethod: "admin-sdk" | "authenticated-rest",
+  options: {
+    adminToken?: string | null;
+    firestoreDb?: any;
+    fetchClient?: typeof fetch;
+  } = {}
+): Promise<{ success: boolean; data?: any; error?: string; targetDatabase: string }> {
+  const currentDb = options.firestoreDb !== undefined ? options.firestoreDb : db;
+  const currentFetch = options.fetchClient || fetch;
+  const adminToken = options.adminToken;
+  const targetDatabase = firestoreDatabaseId;
+
+  let readBack: any = null;
+
+  if (persistenceMethod === "admin-sdk" && currentDb && typeof currentDb.collection === "function") {
+    try {
+      const docSnap = await currentDb.collection("settings").doc("remove_ads").get();
+      if (!docSnap.exists) {
+        return { success: false, error: "Read-back verification failed: Document settings/remove_ads not found in Firestore.", targetDatabase };
+      }
+      readBack = docSnap.data();
+    } catch (err: any) {
+      console.warn("[Remove Ads Admin] Admin SDK read-back skipped/failed:", err?.message || err);
+    }
+  }
+
+  if (!readBack) {
+    const getHeaders: Record<string, string> = {};
+    if (adminToken) {
+      getHeaders["Authorization"] = `Bearer ${adminToken}`;
+    }
+    const getRes = await currentFetch(`${FIRESTORE_REMOVE_ADS_REST_URL}?key=${FIREBASE_API_KEY}`, {
+      headers: getHeaders,
+    });
+    if (!getRes.ok) {
+      const errText = await getRes.text();
+      return { success: false, error: `Read-back verification failed (${getRes.status}): ${errText}`, targetDatabase };
+    }
+    const getData: any = await getRes.json();
+    readBack = parseFirestoreFields(getData.fields || {});
+  }
+
+  // Verify fields match requested settings
+  const mismatches: string[] = [];
+  if (readBack.enabled !== targetConfig.enabled) {
+    mismatches.push(`enabled (expected: ${targetConfig.enabled}, actual: ${readBack.enabled})`);
+  }
+  if (readBack.stripePriceId !== targetConfig.stripePriceId) {
+    mismatches.push(`stripePriceId (expected: "${targetConfig.stripePriceId}", actual: "${readBack.stripePriceId}")`);
+  }
+  if (readBack.currency !== targetConfig.currency) {
+    mismatches.push(`currency (expected: "${targetConfig.currency}", actual: "${readBack.currency}")`);
+  }
+  if (readBack.displayPrice !== targetConfig.displayPrice) {
+    mismatches.push(`displayPrice (expected: "${targetConfig.displayPrice}", actual: "${readBack.displayPrice}")`);
+  }
+
+  if (mismatches.length > 0) {
+    return {
+      success: false,
+      error: `Read-back verification failed: Saved settings do not match requested: ${mismatches.join(", ")}`,
+      targetDatabase,
+    };
+  }
+
+  return { success: true, data: readBack, targetDatabase };
+}
+
+app.post("/api/remove-ads/config", requireAdminAuth, async (req, res) => {
+  const updates = req.body;
+  if (!updates || typeof updates !== "object") {
+    return res.status(400).json({ success: false, error: "Invalid payload body" });
+  }
+
+  const targetPriceId = typeof updates.stripePriceId === "string" ? updates.stripePriceId.trim() : removeAdsConfigState.stripePriceId;
+  const targetDisplayPrice = updates.displayPrice !== undefined && updates.displayPrice !== null ? updates.displayPrice : removeAdsConfigState.displayPrice;
+  const targetCurrency = typeof updates.currency === "string" ? updates.currency.trim() : removeAdsConfigState.currency;
+
+  // 7. Confirm that configured Stripe Price ID corresponds to intended checkout amount and currency
+  const priceValidation = await validateStripePriceConfiguration(
+    targetPriceId,
+    targetDisplayPrice,
+    targetCurrency
+  );
+
+  if (!priceValidation.valid) {
+    return res.status(400).json({
+      success: false,
+      error: priceValidation.error,
+      code: "INVALID_PRICE_CONFIGURATION",
+    });
+  }
+
+  // Prepare candidate configuration without mutating effective in-memory state yet
+  const candidateConfig: RemoveAdsConfigData = {
+    enabled: typeof updates.enabled === "boolean" ? updates.enabled : removeAdsConfigState.enabled,
+    stripePriceId: targetPriceId,
+    displayPrice: priceValidation.formattedDisplayPrice || removeAdsConfigState.displayPrice,
+    currency: priceValidation.normalizedCurrency || removeAdsConfigState.currency,
+    lastUpdated: new Date().toISOString(),
+    updatedBy: (req as any).user?.email || updates.adminEmail || "Admin@7tasker.com",
+  };
+
+  // 1. Extract verified administrator identity token strictly from authenticated request headers (NOT from JSON body)
+  const adminToken =
+    (req as any).firebaseIdToken ||
+    (typeof req.headers["x-firebase-auth"] === "string" ? req.headers["x-firebase-auth"].replace(/^Bearer\s+/i, "").trim() : null) ||
+    (req.headers.authorization?.startsWith("Bearer ") && (req.headers.authorization.match(/\./g) || []).length === 2
+      ? req.headers.authorization.slice(7).trim()
+      : null);
+
+  // 2. Authenticate Firestore write using verified administrator identity or authorized Admin SDK connection targeting exact named database
+  // 3. Do not use API-key-only writes
+  const persistResult = await persistRemoveAdsConfig(candidateConfig, { adminToken });
+
+  // 4. Distinguish failed persistence: Do not suppress Firestore write failures or return false success
+  if (!persistResult.success) {
+    console.error("[Remove Ads Admin] Firestore persistence failed:", persistResult.error);
+    return res.status(persistResult.status === 403 ? 403 : 500).json({
+      success: false,
+      stage: "PERSISTENCE_FAILED",
+      persisted: false,
+      error: persistResult.error,
+      status: persistResult.status === 403 ? "PERMISSION_DENIED" : "ERROR",
+      code: persistResult.status || 500,
+      targetDatabase: persistResult.targetDatabase,
+    });
+  }
+
+  // 6. Read back saved fields and verify they match requested settings from the exact named database
+  const verifyResult = await readBackAndVerifyRemoveAdsConfig(
+    candidateConfig,
+    persistResult.persistenceMethod,
+    { adminToken }
+  );
+
+  // Distinguish failed verification from failed persistence: persistence succeeded, but verification failed
+  if (!verifyResult.success) {
+    console.error("[Remove Ads Admin] Read-back verification failed:", verifyResult.error);
+    return res.status(500).json({
+      success: false,
+      stage: "VERIFICATION_FAILED",
+      persisted: true,
+      error: `Firestore persistence succeeded, but read-back verification failed: ${verifyResult.error}`,
+      code: "READBACK_VERIFICATION_FAILED",
+      targetDatabase: verifyResult.targetDatabase,
+    });
+  }
+
+  // 5. Only update effective configuration after BOTH Firestore persistence and verification succeed
+  removeAdsConfigState = {
+    ...candidateConfig,
+  };
+
+  res.json({
+    success: true,
+    stage: "SUCCESS",
+    persisted: true,
+    verified: true,
+    targetDatabase: firestoreDatabaseId,
+    message: "Remove Ads configuration updated, persisted to named Firestore database, and verified successfully.",
+    config: removeAdsConfigState,
+    persistenceMethod: persistResult.persistenceMethod,
+  });
 });
 
 // 18. [AUTHENTICATED] Create Stripe Checkout Session Endpoint for Android
@@ -2951,6 +3512,7 @@ async function startServer() {
   await syncRemoveAdsStateFromFirestore(true);
   await syncReviewReminderStateFromFirestore(true);
   await ensureAnalyticsCollectionsInitialized();
+  startDailyBackupScheduler();
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -2971,5 +3533,7 @@ async function startServer() {
   });
 }
 
-startServer();
+if (process.env.NODE_ENV !== "test" && !process.argv.includes("--test")) {
+  startServer();
+}
 

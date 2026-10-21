@@ -1,0 +1,119 @@
+{
+  "backupCategory": "USER",
+  "version": "JoyfulDays v4.0",
+  "exportTimestamp": "2026-10-21T09:13:14.929Z",
+  "classification": "CONFIDENTIAL_USER_DATA_VAULT",
+  "targetDatabase": "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1",
+  "sourceDatabaseId": "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1",
+  "targetProject": "joyful-days",
+  "collectionSummary": {
+    "totalUsersCount": 3,
+    "totalEventsCount": 2,
+    "totalPreferencesCount": 3,
+    "totalTransactionsCount": 1,
+    "totalEarnedUnlocksCount": 2,
+    "totalRemoveAdsLifetimeCount": 1
+  },
+  "collections": {
+    "users": [
+      {
+        "uid": "s8phMvsmSac4YebfCEJNGF40w5I2",
+        "email": "familysubs45@gmail.com",
+        "displayName": "Familysubs",
+        "country": "AU",
+        "createdAt": "2026-10-20T09:06:00.000Z",
+        "lastSignInAt": 1792487199471,
+        "settings": {
+          "preferences": {
+            "advancedFeaturesRewardAdsWatched": 1,
+            "advancedFeaturesUnlocked": false,
+            "removeAdsLifetime": false,
+            "googleCalendarSyncEnabled": false,
+            "isAppLockEnabled": false,
+            "notificationSound": "Joyful Chime",
+            "publicHolidayCountry": "AU",
+            "publicHolidayRegion": "VIC",
+            "reminderTiming": "1 day before",
+            "themeMode": "LIGHT",
+            "updatedAt": 1792490645278,
+            "userDisplayName": "Familysubs",
+            "userEmail": "familysubs45@gmail.com"
+          }
+        }
+      },
+      {
+        "uid": "1uVnxyxUGRPR28W67xSample",
+        "email": "pasalavenkatasatish@gmail.com",
+        "displayName": "Satish Pasala",
+        "country": "United States",
+        "createdAt": "2026-10-18T12:30:00.000Z",
+        "settings": {
+          "preferences": {
+            "advancedFeaturesRewardAdsWatched": 3,
+            "advancedFeaturesUnlocked": true,
+            "removeAdsLifetime": false,
+            "themeMode": "DARK",
+            "updatedAt": 1792480000000
+          }
+        }
+      },
+      {
+        "uid": "zaxYs20CaDXSLdhgUjSample",
+        "email": "admin@7tasker.com",
+        "displayName": "Admin User",
+        "country": "Global",
+        "createdAt": "2026-09-01T00:00:00.000Z",
+        "settings": {
+          "preferences": {
+            "advancedFeaturesRewardAdsWatched": 3,
+            "advancedFeaturesUnlocked": true,
+            "removeAdsLifetime": true,
+            "themeMode": "DARK",
+            "updatedAt": 1792480000000
+          }
+        }
+      }
+    ],
+    "events": [
+      {
+        "id": "EVT-001",
+        "title": "Family Thanksgiving Gathering",
+        "category": "holiday",
+        "eventDate": "2026-11-26",
+        "hostUid": "s8phMvsmSac4YebfCEJNGF40w5I2",
+        "rsvpCount": 8,
+        "createdAt": "2026-10-20T09:15:00.000Z"
+      },
+      {
+        "id": "EVT-002",
+        "title": "Annual Milestone Celebration",
+        "category": "anniversary",
+        "eventDate": "2026-12-15",
+        "hostUid": "1uVnxyxUGRPR28W67xSample",
+        "rsvpCount": 14,
+        "createdAt": "2026-10-18T13:00:00.000Z"
+      }
+    ],
+    "stripe_transactions": [
+      {
+        "id": "TXN-STRIPE-001",
+        "stripeEventId": "evt_1UJWe0D1Ga9mbTUX1Bh604Eq",
+        "checkoutSessionId": "cs_live_sample_001",
+        "uid": "zaxYs20CaDXSLdhgUjSample",
+        "customerEmail": "admin@7tasker.com",
+        "amount": 100,
+        "currency": "USD",
+        "paymentStatus": "paid",
+        "createdAt": "2026-10-19T10:00:00.000Z",
+        "source": "STRIPE_VERIFIED_WEBHOOK",
+        "product": "remove_ads_lifetime"
+      }
+    ]
+  },
+  "metadata": {
+    "backupId": "USR-20261021091314-e79a1e",
+    "createdBy": "admin@7tasker.com",
+    "triggerMode": "MANUAL",
+    "targetDatabaseId": "ai-studio-joyfuldaysadmind-935631ae-77f9-4bc9-af0c-27f14d785ab1"
+  }
+}
